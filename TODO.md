@@ -75,13 +75,13 @@
     - [x] main_solution.go実装
     - [x] テストが通るか確認
     - [x] 実装漏れがないか最終チェック
-- [ ] **Day 11: Semaphore パターン:** 同時に実行できる処理の数を制限するセマフォを実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+- [x] **Day 11: Semaphore パターン:** 同時に実行できる処理の数を制限するセマフォを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 - [ ] **Day 12: Future / Promise パターン:** 非同期処理の結果を後から受け取れる`Future`を実装する。
     - [ ] README作成
     - [ ] main.goで問題を作成

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -495,7 +494,7 @@ func TestCancellation(t *testing.T) {
 	})
 	
 	t.Run("Context cancellation", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		_, cancel := context.WithCancel(context.Background())
 		
 		gen := NewGenerator(func(ctx context.Context, yield func(int) bool) {
 			for i := 1; ; i++ {

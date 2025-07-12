@@ -181,7 +181,7 @@ func TestSemaphore(t *testing.T) {
 		acquired := sem.AcquireWithContext(ctx)
 		elapsed := time.Since(start)
 		
-		if acquired {
+		if acquired != nil {
 			t.Error("Should not have acquired permit when context cancelled")
 		}
 		
@@ -371,12 +371,3 @@ func BenchmarkSemaphoreAvailablePermits(b *testing.B) {
 	})
 }
 
-// Additional method for context-based acquisition (bonus)
-func (s *Semaphore) AcquireWithContext(ctx context.Context) bool {
-	select {
-	case <-s.permits:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}

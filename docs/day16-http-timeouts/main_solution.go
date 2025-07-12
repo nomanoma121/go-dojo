@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+// ServerConfig holds server configuration
+type ServerConfig struct {
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	ReadHeaderTimeout time.Duration
+	Port              string
+}
+
+// TimeoutServer represents an HTTP server with proper timeout configuration
+type TimeoutServer struct {
+	server *http.Server
+	config *ServerConfig
+}
+
 // NewServerConfig creates default server configuration
 func NewServerConfig() *ServerConfig {
 	return &ServerConfig{
@@ -42,8 +57,8 @@ func (ts *TimeoutServer) setupRoutes() {
 	mux := http.NewServeMux()
 	
 	mux.HandleFunc("/health", ts.healthHandler)
+	mux.HandleFunc("/slow", ts.slowHandler)
 	mux.HandleFunc("/api/data", ts.dataHandler)
-	mux.HandleFunc("/api/slow", ts.slowHandler)
 	mux.HandleFunc("/api/timeout-test", ts.timeoutTestHandler)
 	
 	ts.server.Handler = mux
@@ -62,13 +77,13 @@ func (ts *TimeoutServer) Shutdown(ctx context.Context) error {
 // healthHandler handles health check requests
 func (ts *TimeoutServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
-		"status": "OK",
-		"time":   time.Now().Unix(),
-		"config": map[string]string{
-			"read_timeout":        ts.config.ReadTimeout.String(),
-			"write_timeout":       ts.config.WriteTimeout.String(),
-			"idle_timeout":        ts.config.IdleTimeout.String(),
-			"read_header_timeout": ts.config.ReadHeaderTimeout.String(),
+		"status":    "healthy",
+		"timestamp": time.Now().Unix(),
+		"timeouts": map[string]string{
+			"read":        ts.config.ReadTimeout.String(),
+			"write":       ts.config.WriteTimeout.String(),
+			"idle":        ts.config.IdleTimeout.String(),
+			"read_header": ts.config.ReadHeaderTimeout.String(),
 		},
 	}
 	

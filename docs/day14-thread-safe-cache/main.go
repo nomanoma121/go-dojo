@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -48,7 +50,7 @@ func (cs *CacheStats) HitRate() float64 {
 	misses := cs.GetMisses()
 	total := hits + misses
 	if total == 0 {
-		return 0.0
+		panic("Not yet implemented").0
 	}
 	return float64(hits) / float64(total)
 }
@@ -85,7 +87,7 @@ func NewCache[K comparable, V any](maxSize int) *Cache[K, V] {
 	// 3. items mapを初期化
 	// 4. LRU listを初期化
 	// 5. 統計情報を初期化
-	return nil
+	panic("Not yet implemented")
 }
 
 // Get retrieves a value from the cache
@@ -99,8 +101,7 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 	// 4. LRUリストで最近アクセスしたことを記録
 	// 5. 統計情報を更新（ヒットまたはミス）
 	// 6. 値を返す
-	var zero V
-	return zero, false
+	panic("Not yet implemented")
 }
 
 // Set stores a value in the cache with optional TTL
@@ -115,6 +116,7 @@ func (c *Cache[K, V]) Set(key K, value V, ttl time.Duration) {
 	// 5. itemsマップに追加
 	// 6. 容量オーバーの場合は古いアイテムを削除
 	// 7. 統計情報を更新
+	panic("Not yet implemented")
 }
 
 // Delete removes a value from the cache
@@ -128,7 +130,7 @@ func (c *Cache[K, V]) Delete(key K) bool {
 	// 4. itemsマップから削除
 	// 5. 統計情報を更新
 	// 6. 削除が成功したかを返す
-	return false
+	panic("Not yet implemented")
 }
 
 // Clear removes all items from the cache
@@ -139,6 +141,7 @@ func (c *Cache[K, V]) Clear() {
 	// 1. 書き込みロックを取得
 	// 2. itemsマップをクリア
 	// 3. LRUリストをクリア
+	panic("Not yet implemented")
 }
 
 // Size returns the current number of items in the cache
@@ -148,7 +151,7 @@ func (c *Cache[K, V]) Size() int {
 	// 実装の流れ:
 	// 1. 読み取りロックを取得
 	// 2. itemsマップのサイズを返す
-	return 0
+	panic("Not yet implemented")
 }
 
 // Stats returns a copy of the current cache statistics
@@ -158,7 +161,7 @@ func (c *Cache[K, V]) Stats() CacheStats {
 	// 実装の流れ:
 	// 1. 統計情報のコピーを作成
 	// 2. atomic操作を使用して各統計値を読み取り
-	return CacheStats{}
+	panic("Not yet implemented")
 }
 
 // CleanupExpired removes all expired items from the cache
@@ -170,7 +173,7 @@ func (c *Cache[K, V]) CleanupExpired() int {
 	// 2. 全てのアイテムをチェック
 	// 3. 期限切れのアイテムを削除
 	// 4. 削除した数を返す
-	return 0
+	panic("Not yet implemented")
 }
 
 // GetOrSet retrieves a value or sets it if not present
@@ -182,8 +185,7 @@ func (c *Cache[K, V]) GetOrSet(key K, valueFunc func() (V, time.Duration)) (V, b
 	// 2. 見つからない場合はvalueFuncを呼び出し
 	// 3. 計算結果をSetしてから返す
 	// 4. 既存の値が見つかった場合はそれを返す
-	var zero V
-	return zero, false
+	panic("Not yet implemented")
 }
 
 // Keys returns all keys currently in the cache
@@ -194,7 +196,7 @@ func (c *Cache[K, V]) Keys() []K {
 	// 1. 読み取りロックを取得
 	// 2. 全てのキーを収集
 	// 3. キーのスライスを返す
-	return nil
+	panic("Not yet implemented")
 }
 
 // evictLRU removes the least recently used item
@@ -207,6 +209,7 @@ func (c *Cache[K, V]) evictLRU() {
 	// 3. itemsマップから削除
 	// 4. LRUリストから削除
 	// 5. 統計情報を更新
+	panic("Not yet implemented")
 }
 
 // moveToFront moves an item to the front of the LRU list
@@ -215,6 +218,7 @@ func (c *Cache[K, V]) moveToFront(item *cacheItem[K, V]) {
 	//
 	// 実装の流れ:
 	// 1. LRUリスト内でアイテムを先頭に移動
+	panic("Not yet implemented")
 }
 
 // CacheWithCleanup extends Cache with automatic cleanup functionality
@@ -233,7 +237,7 @@ func NewCacheWithCleanup[K comparable, V any](maxSize int, cleanupInterval time.
 	// 1. 基本のCacheを作成
 	// 2. クリーンアップ用のチャネルを初期化
 	// 3. バックグラウンドでクリーンアップGorutineを開始
-	return nil
+	panic("Not yet implemented")
 }
 
 // StartCleanup starts the background cleanup goroutine
@@ -244,6 +248,7 @@ func (cwc *CacheWithCleanup[K, V]) StartCleanup() {
 	// 1. Goroutineでクリーンアップループを開始
 	// 2. 定期的にCleanupExpiredを呼び出し
 	// 3. stopCleanupチャネルで停止を監視
+	panic("Not yet implemented")
 }
 
 // Stop stops the background cleanup goroutine
@@ -253,6 +258,7 @@ func (cwc *CacheWithCleanup[K, V]) Stop() {
 	// 実装の流れ:
 	// 1. stopCleanupチャネルにシグナル送信
 	// 2. クリーンアップの完了を待機
+	panic("Not yet implemented")
 }
 
 // LoadingCache extends Cache with loading functionality
@@ -271,7 +277,7 @@ func NewLoadingCache[K comparable, V any](maxSize int, loader func(K) (V, error)
 	// 1. 基本のCacheを作成
 	// 2. loaderファンクションを設定
 	// 3. loadingKeysマップを初期化
-	return nil
+	panic("Not yet implemented")
 }
 
 // Load retrieves a value, loading it if not present
@@ -283,8 +289,7 @@ func (lc *LoadingCache[K, V]) Load(key K) (V, error) {
 	// 2. 見つからない場合はloaderを使用
 	// 3. 同じキーで並行してロードしないよう制御
 	// 4. ロード結果をキャッシュに保存
-	var zero V
-	return zero, nil
+	panic("Not yet implemented")
 }
 
 func main() {

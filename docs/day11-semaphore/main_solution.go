@@ -6,10 +6,16 @@ import (
 	"time"
 )
 
+// Semaphore controls access to a limited number of resources
+type Semaphore struct {
+	permits chan struct{}
+	mu      sync.Mutex
+}
+
 // NewSemaphore creates a new semaphore with the specified number of permits
 func NewSemaphore(permits int) *Semaphore {
-	if permits <= 0 {
-		return nil
+	if permits < 0 {
+		panic("Semaphore permits cannot be negative")
 	}
 	
 	sem := &Semaphore{
@@ -65,7 +71,10 @@ func (s *Semaphore) Release() {
 	case s.permits <- struct{}{}:
 		// Successfully released
 	default:
-		// Semaphore is full, ignore (could be an error in real implementation)
+		// Channel is full, create a goroutine to avoid blocking
+		go func() {
+			s.permits <- struct{}{}
+		}()
 	}
 }
 
