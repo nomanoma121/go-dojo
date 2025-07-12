@@ -2,13 +2,11 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestLoggingMiddleware(t *testing.T) {
