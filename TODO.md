@@ -96,20 +96,20 @@
     - [x] main_solution.go実装
     - [x] テストが通るか確認
     - [x] 実装漏れがないか最終チェック
-- [ ] **Day 14: スレッドセーフなキャッシュ:** `sync.Map`または`RWMutex`を使い、並行アクセス可能なインメモリキャッシュを実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 15: Generator パターン:** チャネルを使い、値を逐次生成するジェネレータ関数を実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+- [x] **Day 14: スレッドセーフなキャッシュ:** `sync.Map`または`RWMutex`を使い、並行アクセス可能なインメモリキャッシュを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 15: Generator パターン:** チャネルを使い、値を逐次生成するジェネレータ関数を実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 
 </details>
 
@@ -118,20 +118,20 @@
 <details>
 <summary>Days 16-30 のタスクリスト</summary>
 
-- [ ] **Day 16: `http.Server`のタイムアウト設定:** Read/Write/Idleの各タイムアウトを設定し、サーバーの安定性を高める。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 17: Graceful Shutdown:** OSのシグナルを受け取り、処理中のリクエストを終えてから安全にサーバーを停止する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+- [x] **Day 16: `http.Server`のタイムアウト設定:** Read/Write/Idleの各タイムアウトを設定し、サーバーの安定性を高める。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 17: Graceful Shutdown:** OSのシグナルを受け取り、処理中のリクエストを終えてから安全にサーバーを停止する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 - [ ] **Day 18: リクエストボディのサイズ制限:** 不正に大きいリクエストからサーバーを保護する。
     - [ ] README作成
     - [ ] main.goで問題を作成

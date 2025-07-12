@@ -1,5 +1,3 @@
-//go:build ignore
-
 package main
 
 import (
@@ -50,7 +48,7 @@ func (cs *CacheStats) HitRate() float64 {
 	misses := cs.GetMisses()
 	total := hits + misses
 	if total == 0 {
-		panic("Not yet implemented").0
+		return 0.0
 	}
 	return float64(hits) / float64(total)
 }
@@ -79,146 +77,194 @@ type Cache[K comparable, V any] struct {
 
 // NewCache creates a new cache with the specified maximum size
 func NewCache[K comparable, V any](maxSize int) *Cache[K, V] {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. maxSizeの妥当性チェック
-	// 2. Cache構造体を初期化
-	// 3. items mapを初期化
-	// 4. LRU listを初期化
-	// 5. 統計情報を初期化
-	panic("Not yet implemented")
+	if maxSize <= 0 {
+		panic("cache size must be positive")
+	}
+	
+	return &Cache[K, V]{
+		maxSize: maxSize,
+		items:   make(map[K]*cacheItem[K, V]),
+		lruList: list.New(),
+		stats:   &CacheStats{},
+	}
 }
 
 // Get retrieves a value from the cache
 func (c *Cache[K, V]) Get(key K) (V, bool) {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 読み取りロックを取得
-	// 2. キーが存在するかチェック
-	// 3. アイテムが期限切れでないかチェック
-	// 4. LRUリストで最近アクセスしたことを記録
-	// 5. 統計情報を更新（ヒットまたはミス）
-	// 6. 値を返す
-	panic("Not yet implemented")
+	c.mu.RLock()
+	item, exists := c.items[key]
+	c.mu.RUnlock()
+	
+	if !exists {
+		atomic.AddInt64(&c.stats.misses, 1)
+		var zero V
+		return zero, false
+	}
+	
+	// Check if expired
+	if item.isExpired() {
+		c.mu.Lock()
+		delete(c.items, key)
+		c.lruList.Remove(item.element)
+		c.mu.Unlock()
+		
+		atomic.AddInt64(&c.stats.misses, 1)
+		var zero V
+		return zero, false
+	}
+	
+	// Move to front (most recently used)
+	c.mu.Lock()
+	c.moveToFront(item)
+	c.mu.Unlock()
+	
+	atomic.AddInt64(&c.stats.hits, 1)
+	return item.value, true
 }
 
 // Set stores a value in the cache with optional TTL
 func (c *Cache[K, V]) Set(key K, value V, ttl time.Duration) {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 書き込みロックを取得
-	// 2. 有効期限を計算
-	// 3. 既存のアイテムがあればLRUリストから削除
-	// 4. 新しいアイテムを作成してLRUリストの先頭に追加
-	// 5. itemsマップに追加
-	// 6. 容量オーバーの場合は古いアイテムを削除
-	// 7. 統計情報を更新
-	panic("Not yet implemented")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// Calculate expiration time
+	var expiration time.Time
+	if ttl > 0 {
+		expiration = time.Now().Add(ttl)
+	}
+	
+	// Remove existing item if present
+	if existingItem, exists := c.items[key]; exists {
+		c.lruList.Remove(existingItem.element)
+	}
+	
+	// Create new item
+	newItem := &cacheItem[K, V]{
+		key:        key,
+		value:      value,
+		expiration: expiration,
+	}
+	
+	// Add to front of LRU list
+	newItem.element = c.lruList.PushFront(newItem)
+	c.items[key] = newItem
+	
+	// Evict if over capacity
+	for len(c.items) > c.maxSize {
+		c.evictLRU()
+	}
+	
+	atomic.AddInt64(&c.stats.sets, 1)
 }
 
 // Delete removes a value from the cache
 func (c *Cache[K, V]) Delete(key K) bool {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 書き込みロックを取得
-	// 2. キーが存在するかチェック
-	// 3. LRUリストから削除
-	// 4. itemsマップから削除
-	// 5. 統計情報を更新
-	// 6. 削除が成功したかを返す
-	panic("Not yet implemented")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	item, exists := c.items[key]
+	if !exists {
+		return false
+	}
+	
+	// Remove from LRU list and map
+	c.lruList.Remove(item.element)
+	delete(c.items, key)
+	
+	atomic.AddInt64(&c.stats.deletes, 1)
+	return true
 }
 
 // Clear removes all items from the cache
 func (c *Cache[K, V]) Clear() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 書き込みロックを取得
-	// 2. itemsマップをクリア
-	// 3. LRUリストをクリア
-	panic("Not yet implemented")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	c.items = make(map[K]*cacheItem[K, V])
+	c.lruList.Init()
 }
 
 // Size returns the current number of items in the cache
 func (c *Cache[K, V]) Size() int {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 読み取りロックを取得
-	// 2. itemsマップのサイズを返す
-	panic("Not yet implemented")
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.items)
 }
 
 // Stats returns a copy of the current cache statistics
 func (c *Cache[K, V]) Stats() CacheStats {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 統計情報のコピーを作成
-	// 2. atomic操作を使用して各統計値を読み取り
-	panic("Not yet implemented")
+	return CacheStats{
+		hits:      c.stats.GetHits(),
+		misses:    c.stats.GetMisses(),
+		evictions: c.stats.GetEvictions(),
+		sets:      c.stats.GetSets(),
+		deletes:   c.stats.GetDeletes(),
+	}
 }
 
 // CleanupExpired removes all expired items from the cache
 func (c *Cache[K, V]) CleanupExpired() int {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 書き込みロックを取得
-	// 2. 全てのアイテムをチェック
-	// 3. 期限切れのアイテムを削除
-	// 4. 削除した数を返す
-	panic("Not yet implemented")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	expiredKeys := make([]K, 0)
+	
+	// Find expired items
+	for key, item := range c.items {
+		if item.isExpired() {
+			expiredKeys = append(expiredKeys, key)
+		}
+	}
+	
+	// Remove expired items
+	for _, key := range expiredKeys {
+		item := c.items[key]
+		c.lruList.Remove(item.element)
+		delete(c.items, key)
+	}
+	
+	return len(expiredKeys)
 }
 
 // GetOrSet retrieves a value or sets it if not present
 func (c *Cache[K, V]) GetOrSet(key K, valueFunc func() (V, time.Duration)) (V, bool) {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. まずGetを試行
-	// 2. 見つからない場合はvalueFuncを呼び出し
-	// 3. 計算結果をSetしてから返す
-	// 4. 既存の値が見つかった場合はそれを返す
-	panic("Not yet implemented")
+	// Try to get first
+	if value, found := c.Get(key); found {
+		return value, true
+	}
+	
+	// Value not found, compute it
+	value, ttl := valueFunc()
+	c.Set(key, value, ttl)
+	return value, false
 }
 
 // Keys returns all keys currently in the cache
 func (c *Cache[K, V]) Keys() []K {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 読み取りロックを取得
-	// 2. 全てのキーを収集
-	// 3. キーのスライスを返す
-	panic("Not yet implemented")
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	keys := make([]K, 0, len(c.items))
+	for key := range c.items {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // evictLRU removes the least recently used item
 func (c *Cache[K, V]) evictLRU() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. LRUリストの末尾要素を取得
-	// 2. 対応するキーを取得
-	// 3. itemsマップから削除
-	// 4. LRUリストから削除
-	// 5. 統計情報を更新
-	panic("Not yet implemented")
+	elem := c.lruList.Back()
+	if elem != nil {
+		item := elem.Value.(*cacheItem[K, V])
+		c.lruList.Remove(elem)
+		delete(c.items, item.key)
+		atomic.AddInt64(&c.stats.evictions, 1)
+	}
 }
 
 // moveToFront moves an item to the front of the LRU list
 func (c *Cache[K, V]) moveToFront(item *cacheItem[K, V]) {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. LRUリスト内でアイテムを先頭に移動
-	panic("Not yet implemented")
+	c.lruList.MoveToFront(item.element)
 }
 
 // CacheWithCleanup extends Cache with automatic cleanup functionality
@@ -231,34 +277,39 @@ type CacheWithCleanup[K comparable, V any] struct {
 
 // NewCacheWithCleanup creates a cache with automatic expired item cleanup
 func NewCacheWithCleanup[K comparable, V any](maxSize int, cleanupInterval time.Duration) *CacheWithCleanup[K, V] {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 基本のCacheを作成
-	// 2. クリーンアップ用のチャネルを初期化
-	// 3. バックグラウンドでクリーンアップGorutineを開始
-	panic("Not yet implemented")
+	cache := NewCache[K, V](maxSize)
+	cwc := &CacheWithCleanup[K, V]{
+		Cache:           cache,
+		cleanupInterval: cleanupInterval,
+		stopCleanup:     make(chan struct{}),
+		cleanupDone:     make(chan struct{}),
+	}
+	cwc.StartCleanup()
+	return cwc
 }
 
 // StartCleanup starts the background cleanup goroutine
 func (cwc *CacheWithCleanup[K, V]) StartCleanup() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. Goroutineでクリーンアップループを開始
-	// 2. 定期的にCleanupExpiredを呼び出し
-	// 3. stopCleanupチャネルで停止を監視
-	panic("Not yet implemented")
+	go func() {
+		defer close(cwc.cleanupDone)
+		ticker := time.NewTicker(cwc.cleanupInterval)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-ticker.C:
+				cwc.CleanupExpired()
+			case <-cwc.stopCleanup:
+				return
+			}
+		}
+	}()
 }
 
 // Stop stops the background cleanup goroutine
 func (cwc *CacheWithCleanup[K, V]) Stop() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. stopCleanupチャネルにシグナル送信
-	// 2. クリーンアップの完了を待機
-	panic("Not yet implemented")
+	close(cwc.stopCleanup)
+	<-cwc.cleanupDone
 }
 
 // LoadingCache extends Cache with loading functionality
@@ -271,25 +322,53 @@ type LoadingCache[K comparable, V any] struct {
 
 // NewLoadingCache creates a cache that can load missing values
 func NewLoadingCache[K comparable, V any](maxSize int, loader func(K) (V, error)) *LoadingCache[K, V] {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 基本のCacheを作成
-	// 2. loaderファンクションを設定
-	// 3. loadingKeysマップを初期化
-	panic("Not yet implemented")
+	return &LoadingCache[K, V]{
+		Cache:       NewCache[K, V](maxSize),
+		loader:      loader,
+		loadingKeys: make(map[K]chan struct{}),
+	}
 }
 
 // Load retrieves a value, loading it if not present
 func (lc *LoadingCache[K, V]) Load(key K) (V, error) {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. まずキャッシュから取得を試行
-	// 2. 見つからない場合はloaderを使用
-	// 3. 同じキーで並行してロードしないよう制御
-	// 4. ロード結果をキャッシュに保存
-	panic("Not yet implemented")
+	// Try cache first
+	if value, found := lc.Get(key); found {
+		return value, nil
+	}
+	
+	// Check if already loading
+	lc.loadingMu.Lock()
+	if doneCh, loading := lc.loadingKeys[key]; loading {
+		lc.loadingMu.Unlock()
+		// Wait for load to complete
+		<-doneCh
+		// Try cache again
+		if value, found := lc.Get(key); found {
+			return value, nil
+		}
+		var zero V
+		return zero, fmt.Errorf("load failed for key %v", key)
+	}
+	
+	// Start loading
+	doneCh := make(chan struct{})
+	lc.loadingKeys[key] = doneCh
+	lc.loadingMu.Unlock()
+	
+	// Load value
+	value, err := lc.loader(key)
+	
+	// Cleanup and cache result
+	lc.loadingMu.Lock()
+	delete(lc.loadingKeys, key)
+	close(doneCh)
+	lc.loadingMu.Unlock()
+	
+	if err == nil {
+		lc.Set(key, value, 0) // No TTL for loaded values
+	}
+	
+	return value, err
 }
 
 func main() {

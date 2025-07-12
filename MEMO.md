@@ -41,3 +41,48 @@ main_test.goに書かれている失敗するテストをパスさせるため�
 ## 追記
 
 ディレクトリの構成を少し変えました。/docsに資料を移動させました。
+
+## 重要：ファイル構成と作業フローの理解
+
+### ファイル構成の正しい理解
+
+#### main.go（問題ファイル）
+- **`//go:build ignore`を必ず付ける**
+- TODOコメントと実装の流れが書かれている
+- コンパイルエラーを防ぐため、build ignoreを付ける
+- 学習者が実装を埋めていく形式（穴埋め問題）
+
+#### main_solution.go（解答ファイル）
+- **`//go:build ignore`を付けない**
+- 完全な実装が含まれている
+- テスト実行時にコンパイルされる解答ファイル
+- 実際にテストされるのはこのファイル
+
+#### main_test.go（テストファイル）
+- 常にアクティブ
+- main_solution.goの実装をテストする
+
+### 正しい作業フロー
+
+1. **main.go**: `//go:build ignore`を確認/追加
+2. **main_solution.go**: build ignoreがないことを確認
+3. **実装**: main_solution.goに完全な実装を行う
+4. **テスト**: `go test -v`でmain_solution.goをテスト
+5. **レース検出**: `go test -race`で並行安全性を確認
+
+### 重要なポイント
+
+- **main.goは学習用の穴埋め形式**
+- **main_solution.goが実際にテストされる解答**
+- **テストは必ずmain_solution.goで実行される**
+- **main.goにbuild ignoreを付けることでコンパイルエラーを防ぐ**
+
+### 間違えやすいパターン
+
+❌ **間違い**: main_solution.goにbuild ignoreを付ける
+✅ **正解**: main.goにbuild ignoreを付ける
+
+❌ **間違い**: main.goを実装して試す
+✅ **正解**: main_solution.goを実装してテストする
+
+この理解を基に、今後の作業を進める。
