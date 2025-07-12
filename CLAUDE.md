@@ -7,6 +7,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+# ツールの使い方
+- **ask_human**: MCP経由で、Discordにいる私に質問をすることができます。要件が不明確な場合や、判断に迷う場合は、ためらわずにこのツールを使ってください。また作業の進捗を報告することもできます。
+
 ## Project Overview
 
 This is `go-dojo`, a comprehensive 60-day Go programming curriculum designed to teach professional-level Go development skills. Each day focuses on a specific topic with hands-on exercises, tests, and performance benchmarks.
