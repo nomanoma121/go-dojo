@@ -7,6 +7,87 @@ import (
 	"time"
 )
 
+// Task represents a unit of work to be processed
+type Task struct {
+	ID       int
+	Data     interface{}
+	Priority int
+	Created  time.Time
+}
+
+// Result represents the result of processing a task
+type Result struct {
+	TaskID    int
+	Output    interface{}
+	Error     error
+	Duration  time.Duration
+	WorkerID  int
+}
+
+// WorkerPool manages a fixed number of worker goroutines
+type WorkerPool struct {
+	numWorkers int
+	taskQueue  chan Task
+	resultChan chan Result
+	quit       chan struct{}
+	wg         sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+}
+
+// PoolStats represents statistics about the worker pool
+type PoolStats struct {
+	NumWorkers    int
+	QueueSize     int
+	QueueLength   int
+	TasksComplete int64
+	TasksInFlight int
+}
+
+// TaskProcessor interface for processing different types of tasks
+type TaskProcessor interface {
+	Process(data interface{}) (interface{}, error)
+}
+
+// SimpleTaskProcessor processes simple tasks
+type SimpleTaskProcessor struct{}
+
+// HeavyTaskProcessor simulates CPU-intensive work
+type HeavyTaskProcessor struct {
+	ProcessingTime time.Duration
+}
+
+// BatchProcessor processes multiple items in batches
+type BatchProcessor struct {
+	BatchSize int
+	buffer    []interface{}
+	tasks     []Task
+	mu        sync.Mutex
+}
+
+// NewWorkerPool creates a new WorkerPool
+func NewWorkerPool(numWorkers int, queueSize int) *WorkerPool {
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	return &WorkerPool{
+		numWorkers: numWorkers,
+		taskQueue:  make(chan Task, queueSize),
+		resultChan: make(chan Result, queueSize),
+		quit:       make(chan struct{}),
+		ctx:        ctx,
+		cancel:     cancel,
+	}
+}
+
+// NewBatchProcessor creates a new BatchProcessor
+func NewBatchProcessor(batchSize int) *BatchProcessor {
+	return &BatchProcessor{
+		BatchSize: batchSize,
+		buffer:    make([]interface{}, 0, batchSize),
+		tasks:     make([]Task, 0, batchSize),
+	}
+}
+
 // Start starts the worker pool
 func (wp *WorkerPool) Start() {
 	for i := 0; i < wp.numWorkers; i++ {
@@ -174,7 +255,7 @@ func (bp *BatchProcessor) AddTask(task Task) bool {
 	defer bp.mu.Unlock()
 	
 	bp.tasks = append(bp.tasks, task)
-	return len(bp.tasks) >= bp.batchSize
+	return len(bp.tasks) >= bp.BatchSize
 }
 
 func (bp *BatchProcessor) ProcessBatch() []Result {

@@ -5,6 +5,55 @@ import (
 	"sync"
 )
 
+// DataItem represents a piece of data flowing through the pipeline
+type DataItem struct {
+	ID    int
+	Value interface{}
+	Stage string
+}
+
+// Pipeline represents a data processing pipeline
+type Pipeline struct {
+	input   chan DataItem
+	output  chan DataItem
+	workers int
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+// NewPipeline creates a new pipeline
+func NewPipeline(workers int, bufferSize int) *Pipeline {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Pipeline{
+		input:   make(chan DataItem, bufferSize),
+		output:  make(chan DataItem, bufferSize),
+		workers: workers,
+		ctx:     ctx,
+		cancel:  cancel,
+	}
+}
+
+// MultiStagePipeline represents a multi-stage pipeline
+type MultiStagePipeline struct {
+	stages []Stage
+	input  chan DataItem
+	output chan DataItem
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+// Stage represents a processing stage
+type Stage struct {
+	Name      string
+	Workers   int
+	Input     chan DataItem
+	Output    chan DataItem
+	Transform func(DataItem) DataItem
+}
+
+
 // Start starts the pipeline
 func (p *Pipeline) Start() {
 	for i := 0; i < p.workers; i++ {
@@ -143,11 +192,14 @@ func FanIn(ctx context.Context, inputs ...<-chan DataItem) <-chan DataItem {
 }
 
 // NewMultiStagePipeline creates a multi-stage pipeline
-func NewMultiStagePipeline(stages ...func(DataItem) DataItem) *MultiStagePipeline {
+func NewMultiStagePipeline() *MultiStagePipeline {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &MultiStagePipeline{
-		stages: stages,
+		stages: make([]Stage, 0),
 		input:  make(chan DataItem),
 		output: make(chan DataItem),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 

@@ -5,55 +5,55 @@
 <details>
 <summary>Days 1-15 のタスクリスト</summary>
 
-- [ ] **Day 01: Contextによるキャンセル伝播:** Goroutineのツリーにキャンセルのシグナルを正しく伝える。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 02: Contextによるタイムアウト/デッドライン:** 外部API呼び出しなど、時間のかかる処理にタイムアウトを設定する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 03: `sync.Mutex` vs `RWMutex`:** 読み取りと書き込みの競合状態を制御し、パフォーマンスを比較する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 04: `sync.Once`による安全な初期化:** 一度しか実行したくない初期化処理をスレッドセーフに実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 05: `sync.Pool`によるオブジェクト再利用:** GCの負荷を軽減するためのオブジェクトプーリングを実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 06: Worker Pool パターン:** 決まった数のGoroutineで大量のタスクを効率的に処理する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 07: Worker Pool (結果の受信):** 各ワーカーからの処理結果を安全に収集する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+- [x] **Day 01: Contextによるキャンセル伝播:** Goroutineのツリーにキャンセルのシグナルを正しく伝える。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 02: Contextによるタイムアウト/デッドライン:** 外部API呼び出しなど、時間のかかる処理にタイムアウトを設定する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 03: `sync.Mutex` vs `RWMutex`:** 読み取りと書き込みの競合状態を制御し、パフォーマンスを比較する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 04: `sync.Once`による安全な初期化:** 一度しか実行したくない初期化処理をスレッドセーフに実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 05: `sync.Pool`によるオブジェクト再利用:** GCの負荷を軽減するためのオブジェクトプーリングを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 06: Worker Pool パターン:** 決まった数のGoroutineで大量のタスクを効率的に処理する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 07: Worker Pool (結果の受信):** 各ワーカーからの処理結果を安全に収集する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 - [ ] **Day 08: Fan-in / Fan-out パターン:** 複数のデータソースを一つにまとめ、並列処理させるパイプラインを構築する。
     - [ ] README作成
     - [ ] main.goで問題を作成

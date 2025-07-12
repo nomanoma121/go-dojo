@@ -211,15 +211,15 @@ func TestSlicePool(t *testing.T) {
 		
 		capacities := []int{32, 64, 128, 256, 512}
 		
-		for _, cap := range capacities {
-			slice := pool.GetSlice(cap)
+		for _, capacity := range capacities {
+			slice := pool.GetSlice(capacity)
 			if slice == nil {
-				t.Errorf("Got nil slice for capacity %d", cap)
+				t.Errorf("Got nil slice for capacity %d", capacity)
 				continue
 			}
 			
-			if cap(slice) < cap {
-				t.Errorf("Expected capacity >= %d, got %d", cap, cap(slice))
+			if cap(slice) < capacity {
+				t.Errorf("Expected capacity >= %d, got %d", capacity, cap(slice))
 			}
 			
 			pool.PutSlice(slice)

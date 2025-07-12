@@ -3,7 +3,47 @@ package main
 import (
 	"bytes"
 	"sync"
+	"time"
 )
+
+// BufferPool manages a pool of bytes.Buffer for efficient reuse
+type BufferPool struct {
+	pool sync.Pool
+}
+
+// WorkerData represents data processed by workers
+type WorkerData struct {
+	ID       int
+	Payload  []byte
+	Metadata map[string]string
+	Results  []float64
+}
+
+// WorkerDataPool manages a pool of WorkerData structs
+type WorkerDataPool struct {
+	pool sync.Pool
+}
+
+// SlicePool manages pools of slices with different capacities
+type SlicePool struct {
+	pools map[int]*sync.Pool // key: capacity range, value: pool
+	mu    sync.RWMutex
+}
+
+// ProcessingService demonstrates object pooling in a service
+type ProcessingService struct {
+	bufferPool     *BufferPool
+	workerDataPool *WorkerDataPool
+	slicePool      *SlicePool
+}
+
+// PoolStats provides statistics about pool usage
+type PoolStats struct {
+	BufferPoolHits   int64
+	WorkerPoolHits   int64
+	SlicePoolHits    int64
+	TotalAllocations int64
+}
 
 // BufferPool の実装
 func NewBufferPool() *BufferPool {
@@ -153,6 +193,14 @@ func (sp *SlicePool) PutSlice(slice []byte) {
 }
 
 // ProcessingService の実装
+func NewProcessingService() *ProcessingService {
+	return &ProcessingService{
+		bufferPool:     NewBufferPool(),
+		workerDataPool: NewWorkerDataPool(),
+		slicePool:      NewSlicePool(),
+	}
+}
+
 func (ps *ProcessingService) ProcessData(inputData []byte) (string, error) {
 	// バッファプールからバッファを取得
 	buf := ps.bufferPool.Get()
@@ -201,4 +249,20 @@ func ProcessWithoutPool(inputData []byte) (string, error) {
 	buf.WriteString("-processed")
 	
 	return buf.String(), nil
+}
+
+// GetStats returns current pool statistics (stub for demonstration)
+func (ps *ProcessingService) GetStats() PoolStats {
+	// 実際の実装では適切な統計情報を収集
+	return PoolStats{}
+}
+
+// simulateHeavyProcessing simulates CPU-intensive work
+func simulateHeavyProcessing(data []byte, workSlice []byte) []byte {
+	// データ変換の模擬
+	result := make([]byte, len(data))
+	for i, b := range data {
+		result[i] = b ^ 0xFF // 簡単な変換
+	}
+	return result
 }

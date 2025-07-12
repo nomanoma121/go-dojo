@@ -7,6 +7,52 @@ import (
 	"time"
 )
 
+// Task represents a unit of work
+type Task struct {
+	ID       int
+	Data     interface{}
+	Priority int
+}
+
+// Result represents the result of processing a task
+type Result struct {
+	TaskID   int
+	Output   interface{}
+	Error    error
+	Duration time.Duration
+}
+
+// ResultCollector collects and manages results from workers
+type ResultCollector struct {
+	results     map[int]Result
+	resultChan  chan Result
+	orderedMode bool
+	mu          sync.RWMutex
+	ctx         context.Context
+}
+
+// AggregatedResult represents aggregated results
+type AggregatedResult struct {
+	TotalTasks    int
+	SuccessCount  int
+	ErrorCount    int
+	Results       []Result
+	AggregateData interface{}
+}
+
+// ResultAggregator aggregates multiple results
+type ResultAggregator struct {
+	aggregateFunc func([]Result) interface{}
+	mu            sync.Mutex
+}
+
+// NewResultAggregator creates a new ResultAggregator
+func NewResultAggregator(aggregateFunc func([]Result) interface{}) *ResultAggregator {
+	return &ResultAggregator{
+		aggregateFunc: aggregateFunc,
+	}
+}
+
 // NewResultCollector creates a new ResultCollector
 func NewResultCollector(ctx context.Context, bufferSize int, orderedMode bool) *ResultCollector {
 	return &ResultCollector{
@@ -122,13 +168,6 @@ func (rc *ResultCollector) GetAllResults() []Result {
 	}
 	
 	return results
-}
-
-// NewResultAggregator creates a new ResultAggregator
-func NewResultAggregator(aggregateFunc func([]Result) interface{}) *ResultAggregator {
-	return &ResultAggregator{
-		aggregateFunc: aggregateFunc,
-	}
 }
 
 // Aggregate aggregates results
