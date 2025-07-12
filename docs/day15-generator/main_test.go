@@ -510,20 +510,35 @@ func TestCancellation(t *testing.T) {
 		})
 		
 		var values []int
+		var mu sync.Mutex
+		done := make(chan struct{})
+		
 		go func() {
+			defer close(done)
 			for v := range gen.Chan() {
+				mu.Lock()
 				values = append(values, v)
-				if len(values) >= 5 {
+				length := len(values)
+				mu.Unlock()
+				
+				if length >= 5 {
 					cancel()
 					break
 				}
 			}
 		}()
 		
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+		}
 		
-		if len(values) < 5 {
-			t.Errorf("Expected at least 5 values, got %d", len(values))
+		mu.Lock()
+		length := len(values)
+		mu.Unlock()
+		
+		if length < 5 {
+			t.Errorf("Expected at least 5 values, got %d", length)
 		}
 	})
 }
