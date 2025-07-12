@@ -1,8 +1,43 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 )
+
+// Cache インターフェース - 共通のキャッシュ操作を定義
+type Cache interface {
+	Get(key string) (string, bool)
+	Set(key, value string)
+	Delete(key string)
+	Len() int
+}
+
+// MutexCache は sync.Mutex を使ったキャッシュ実装
+type MutexCache struct {
+	data  map[string]string
+	mutex sync.Mutex
+}
+
+// NewMutexCache creates a new MutexCache
+func NewMutexCache() *MutexCache {
+	return &MutexCache{
+		data: make(map[string]string),
+	}
+}
+
+// RWMutexCache は sync.RWMutex を使ったキャッシュ実装
+type RWMutexCache struct {
+	data    map[string]string
+	rwmutex sync.RWMutex
+}
+
+// NewRWMutexCache creates a new RWMutexCache
+func NewRWMutexCache() *RWMutexCache {
+	return &RWMutexCache{
+		data: make(map[string]string),
+	}
+}
 
 // MutexCache は sync.Mutex を使ったキャッシュ実装
 func (c *MutexCache) Get(key string) (string, bool) {

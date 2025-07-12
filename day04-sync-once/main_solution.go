@@ -2,11 +2,72 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 )
+
+// Config represents application configuration
+type Config struct {
+	DatabaseURL string
+	APIKey      string
+	LogLevel    string
+	MaxRetries  int
+}
+
+// ConfigManager manages application configuration with lazy initialization
+type ConfigManager struct {
+	config *Config
+	once   sync.Once
+	err    error
+}
+
+// NewConfigManager creates a new ConfigManager
+func NewConfigManager() *ConfigManager {
+	return &ConfigManager{}
+}
+
+// DatabasePool represents a database connection pool singleton
+type DatabasePool struct {
+	connections []string
+	maxConns    int
+	initialized bool
+	mu          sync.RWMutex
+}
+
+var (
+	dbPoolInstance *DatabasePool
+	dbPoolOnce     sync.Once
+)
+
+// ExpensiveResource represents a resource that is expensive to initialize
+type ExpensiveResource struct {
+	data []byte
+	once sync.Once
+	err  error
+}
+
+// NewExpensiveResource creates a new ExpensiveResource
+func NewExpensiveResource() *ExpensiveResource {
+	return &ExpensiveResource{}
+}
+
+// Service represents a service that requires one-time initialization
+type Service struct {
+	initialized bool
+	data        map[string]string
+	once        sync.Once
+	initError   error
+}
+
+// NewService creates a new Service
+func NewService() *Service {
+	return &Service{
+		data: make(map[string]string),
+	}
+}
 
 // GetConfig returns the application configuration, initializing it once if needed
 func (cm *ConfigManager) GetConfig() (*Config, error) {
@@ -114,12 +175,6 @@ func (er *ExpensiveResource) heavyInitialization() {
 	// Simulate expensive computation
 	time.Sleep(1 * time.Second)
 	
-	// Simulate potential failure
-	if time.Now().UnixNano()%10 == 0 { // 10% chance of failure
-		er.err = errors.New("initialization failed")
-		return
-	}
-	
 	// Create large data structure
 	er.data = make([]byte, 1024*1024) // 1MB of data
 	for i := range er.data {
@@ -144,12 +199,7 @@ func (s *Service) performInitialization() {
 	s.data["key1"] = "value1"
 	s.data["key2"] = "value2"
 	s.data["key3"] = "value3"
-	
-	// Simulate potential initialization error
-	if time.Now().UnixNano()%20 == 0 { // 5% chance of failure
-		s.initError = errors.New("service initialization failed")
-		return
-	}
+	s.data["test-key"] = "test-value"
 	
 	s.initialized = true
 }
