@@ -1,6 +1,10 @@
 # CLAUDE.md
 必ず日本語で回答してください
 
+@MEMO.mdで内容を確認し、@TODO.mdの内容を実装しチェックを入れていってください。
+
+適宜コミットすること
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
