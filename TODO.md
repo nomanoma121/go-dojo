@@ -54,27 +54,27 @@
     - [x] main_solution.go実装
     - [x] テストが通るか確認
     - [x] 実装漏れがないか最終チェック
-- [ ] **Day 08: Fan-in / Fan-out パターン:** 複数のデータソースを一つにまとめ、並列処理させるパイプラインを構築する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 09: エラーハンドリング付きパイプライン:** 並行処理パイプライン内で発生したエラーを適切に処理する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 10: Rate Limiter (Ticker版):** `time.Ticker`を使い、一定間隔で処理を許可するレートリミッターを実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+- [x] **Day 08: Fan-in / Fan-out パターン:** 複数のデータソースを一つにまとめ、並列処理させるパイプラインを構築する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 09: エラーハンドリング付きパイプライン:** 並行処理パイプライン内で発生したエラーを適切に処理する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 10: Rate Limiter (Ticker版):** `time.Ticker`を使い、一定間隔で処理を許可するレートリミッターを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 - [ ] **Day 11: Semaphore パターン:** 同時に実行できる処理の数を制限するセマフォを実装する。
     - [ ] README作成
     - [ ] main.goで問題を作成
