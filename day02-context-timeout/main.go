@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -15,7 +17,7 @@ type APIResponse struct {
 }
 
 // mockExternalAPI simulates an external API call with variable response time
-func mockExternalAPI(url string, simulatedDelay time.Duration) (*APIResponse, error) {
+var mockExternalAPI = func(url string, simulatedDelay time.Duration) (*APIResponse, error) {
 	// Simulate network delay
 	time.Sleep(simulatedDelay)
 	

@@ -8,6 +8,42 @@ import (
 	"time"
 )
 
+// APIResponse represents a response from an external API
+type APIResponse struct {
+	Data      string
+	Status    int
+	Timestamp time.Time
+	Duration  time.Duration
+}
+
+// APIError represents an API error
+type APIError struct {
+	Message string
+	Code    int
+}
+
+func (e *APIError) Error() string {
+	return e.Message
+}
+
+// mockExternalAPI simulates an external API call with variable response time
+var mockExternalAPI = func(url string, simulatedDelay time.Duration) (*APIResponse, error) {
+	// Simulate network delay
+	time.Sleep(simulatedDelay)
+	
+	// Simulate occasional failures
+	if rand.Float32() < 0.1 { // 10% chance of failure
+		return nil, &APIError{Message: "simulated API failure", Code: 500}
+	}
+	
+	return &APIResponse{
+		Data:      "response from " + url,
+		Status:    200,
+		Timestamp: time.Now(),
+		Duration:  simulatedDelay,
+	}, nil
+}
+
 // APICallWithTimeout は外部APIを呼び出し、タイムアウトを設定する
 func APICallWithTimeout(ctx context.Context, url string, timeout time.Duration) (*APIResponse, error) {
 	// 1. context.WithTimeout()でタイムアウト付きコンテキストを作成
@@ -60,7 +96,8 @@ func APICallWithRetry(ctx context.Context, url string, timeout time.Duration, ma
 	var lastErr error
 	baseDelay := 100 * time.Millisecond
 	
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	// maxRetries回の試行（1回目 + (maxRetries-1)回のリトライ）
+	for attempt := 1; attempt <= maxRetries; attempt++ {
 		// 1. 各試行でタイムアウトを設定
 		resp, err := APICallWithTimeout(ctx, url, timeout)
 		if err == nil {
@@ -75,12 +112,12 @@ func APICallWithRetry(ctx context.Context, url string, timeout time.Duration, ma
 		}
 		
 		// 最後の試行の場合はリトライしない
-		if attempt == maxRetries {
+		if attempt >= maxRetries {
 			break
 		}
 		
 		// 2. 指数バックオフで待機
-		delay := time.Duration(math.Pow(2, float64(attempt))) * baseDelay
+		delay := time.Duration(math.Pow(2, float64(attempt-1))) * baseDelay
 		
 		select {
 		case <-ctx.Done():
