@@ -1,5 +1,3 @@
-//go:build ignore
-
 package main
 
 import (
@@ -46,12 +44,15 @@ type CircuitBreaker struct {
 	resetTimeout     time.Duration
 	halfOpenMaxCalls int
 
-	state         CircuitBreakerState
-	failures      int
-	lastFailTime  time.Time
-	halfOpenCalls int
-	successCount  int
-	totalCalls    int
+	state              CircuitBreakerState
+	failures           int
+	lastFailTime       time.Time
+	halfOpenCalls      int
+	totalRequests      uint64
+	totalSuccesses     uint64
+	totalFailures      uint64
+	consecutiveSuccesses uint64
+	consecutiveFailures  uint64
 
 	mutex sync.RWMutex
 }
@@ -76,106 +77,157 @@ func (e *CircuitBreakerOpenError) Error() string {
 
 // NewCircuitBreaker creates a new circuit breaker
 func NewCircuitBreaker(settings Settings) *CircuitBreaker {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. CircuitBreakerを初期化
-	// 2. 設定値を設定
-	// 3. 初期状態はStateClosed
-	// 4. カウンターを初期化
-	panic("Not yet implemented")
+	return &CircuitBreaker{
+		maxFailures:      settings.MaxFailures,
+		resetTimeout:     settings.ResetTimeout,
+		halfOpenMaxCalls: settings.HalfOpenMaxCalls,
+		state:            StateClosed,
+		failures:         0,
+		halfOpenCalls:    0,
+	}
 }
 
 // Call executes a function with circuit breaker protection
 func (cb *CircuitBreaker) Call(fn func() (interface{}, error)) (interface{}, error) {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 現在の状態を確認
-	// 2. 状態に応じて処理を分岐:
-	//    - StateClosed: そのまま関数を実行
-	//    - StateOpen: タイムアウトをチェックしてHalf-Openか判定
-	//    - StateHalfOpen: 試行回数をチェック
-	// 3. 関数を実行して結果を記録
-	// 4. 成功・失敗に応じて状態を更新
-	panic("Not yet implemented")
+	cb.mutex.Lock()
+	
+	// Check if we should transition from Open to Half-Open
+	if cb.state == StateOpen && cb.shouldAttemptReset() {
+		cb.state = StateHalfOpen
+		cb.halfOpenCalls = 0
+	}
+	
+	// Check if call is allowed
+	if !cb.canExecuteUnsafe() {
+		cb.mutex.Unlock()
+		return nil, &CircuitBreakerOpenError{State: cb.state}
+	}
+	
+	// Increment counters
+	cb.totalRequests++
+	if cb.state == StateHalfOpen {
+		cb.halfOpenCalls++
+	}
+	
+	cb.mutex.Unlock()
+	
+	// Execute the function
+	result, err := fn()
+	
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+	
+	if err != nil {
+		cb.onFailure()
+		return nil, err
+	}
+	
+	cb.onSuccess()
+	return result, nil
 }
 
 // GetState returns current state
 func (cb *CircuitBreaker) GetState() CircuitBreakerState {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. RLockで読み取り専用ロックを取得
-	// 2. 現在の状態を返す
-	panic("Not yet implemented")
+	cb.mutex.RLock()
+	defer cb.mutex.RUnlock()
+	return cb.state
 }
 
 // GetCounts returns current statistics
 func (cb *CircuitBreaker) GetCounts() Counts {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. RLockで読み取り専用ロックを取得
-	// 2. 現在の統計情報を Counts 構造体にまとめて返す
-	panic("Not yet implemented")
+	cb.mutex.RLock()
+	defer cb.mutex.RUnlock()
+	
+	return Counts{
+		Requests:             cb.totalRequests,
+		TotalSuccesses:       cb.totalSuccesses,
+		TotalFailures:        cb.totalFailures,
+		ConsecutiveSuccesses: cb.consecutiveSuccesses,
+		ConsecutiveFailures:  cb.consecutiveFailures,
+	}
 }
 
 // Reset resets the circuit breaker to closed state
 func (cb *CircuitBreaker) Reset() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. Lockで書き込みロックを取得
-	// 2. 状態をStateClosedにリセット
-	// 3. すべてのカウンターをリセット
-	panic("Not yet implemented")
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+	
+	cb.state = StateClosed
+	cb.failures = 0
+	cb.halfOpenCalls = 0
+	cb.consecutiveSuccesses = 0
+	cb.consecutiveFailures = 0
 }
 
 // CanExecute checks if the circuit breaker allows execution
 func (cb *CircuitBreaker) CanExecute() bool {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 現在の状態を確認
-	// 2. StateClosed: true
-	// 3. StateOpen: タイムアウトをチェックしてfalseかHalf-Openに移行
-	// 4. StateHalfOpen: 試行回数をチェック
-	panic("Not yet implemented")
+	cb.mutex.RLock()
+	defer cb.mutex.RUnlock()
+	
+	return cb.canExecuteUnsafe()
 }
 
-// Private helper methods (実装のヒント)
+// Private helper methods
+
+// canExecuteUnsafe checks if execution is allowed (assumes lock is held)
+func (cb *CircuitBreaker) canExecuteUnsafe() bool {
+	switch cb.state {
+	case StateClosed:
+		return true
+	case StateOpen:
+		if cb.shouldAttemptReset() {
+			return true // Will transition to half-open
+		}
+		return false
+	case StateHalfOpen:
+		return cb.halfOpenCalls < cb.halfOpenMaxCalls
+	default:
+		return false
+	}
+}
 
 // onSuccess is called when a call succeeds
 func (cb *CircuitBreaker) onSuccess() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 成功カウンターを更新
-	// 2. StateHalfOpenの場合はStateClosedに移行を検討
-	// 3. 失敗カウンターをリセット
-	panic("Not yet implemented")
+	cb.totalSuccesses++
+	cb.consecutiveSuccesses++
+	cb.consecutiveFailures = 0
+	
+	switch cb.state {
+	case StateHalfOpen:
+		// Any success in half-open state closes the circuit
+		cb.state = StateClosed
+		cb.failures = 0
+		cb.halfOpenCalls = 0
+	case StateClosed:
+		// Reset failure count on any success in closed state
+		cb.failures = 0
+	}
 }
 
 // onFailure is called when a call fails
 func (cb *CircuitBreaker) onFailure() {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. 失敗カウンターを更新
-	// 2. lastFailTimeを更新
-	// 3. 失敗回数が閾値を超えたらStateOpenに移行
-	panic("Not yet implemented")
+	cb.totalFailures++
+	cb.consecutiveFailures++
+	cb.consecutiveSuccesses = 0
+	cb.failures++
+	cb.lastFailTime = time.Now()
+	
+	switch cb.state {
+	case StateClosed:
+		// Check if we should open the circuit
+		if cb.failures >= cb.maxFailures {
+			cb.state = StateOpen
+		}
+	case StateHalfOpen:
+		// Any failure in half-open state reopens the circuit
+		cb.state = StateOpen
+		cb.halfOpenCalls = 0
+	}
 }
 
 // shouldAttemptReset checks if circuit breaker should attempt reset
 func (cb *CircuitBreaker) shouldAttemptReset() bool {
-	// TODO: 実装してください
-	//
-	// 実装の流れ:
-	// 1. StateOpenかつ十分な時間が経過している場合にtrue
-	// 2. time.Since(cb.lastFailTime) >= cb.resetTimeout
-	panic("Not yet implemented")
+	return cb.state == StateOpen && time.Since(cb.lastFailTime) >= cb.resetTimeout
 }
 
 // Utility functions for testing and demonstration
