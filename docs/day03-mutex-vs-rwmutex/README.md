@@ -1,47 +1,608 @@
-# Day 03: sync.Mutex vs RWMutex
+# Day 03: sync.Mutex vs RWMutex実装
 
 ## 🎯 本日の目標 (Today's Goal)
 
-このチャレンジを通して、以下のスキルを身につけることができます：
-
-- **sync.Mutex と sync.RWMutex の違いを理解し、適切に使い分けられるようになる**
-- **並行読み取りのパフォーマンス利点を測定・比較できるようになる**
-- **共有リソースへの安全なアクセス制御を実装できるようになる**
-- **レースコンディションを防ぐミューテックスの使い方をマスターする**
+Goの並行プログラミングにおける排他制御の核心技術であるsync.MutexとRWMutexを深く理解し、実装する。読み取り主体のワークロードにおけるパフォーマンス最適化技術を習得し、レースコンディションを完全に防ぐ安全で効率的な並行データ構造を構築できるようになる。
 
 ## 📖 解説 (Explanation)
 
 ### なぜミューテックスが必要なのか？
 
-Goの並行プログラミングでは、複数のGoroutineが同じメモリ領域（変数、スライス、マップなど）に同時にアクセスする状況が頻繁に発生します。これが**レースコンディション**と呼ばれる問題を引き起こす可能性があります。
+Goの並行プログラミングでは、複数のGoroutineが同じメモリ領域（変数、スライス、マップなど）に同時にアクセスする状況が頻繁に発生します。これが**レースコンディション**と呼ばれる深刻な問題を引き起こします。
+
+#### レースコンディションの実例分析
 
 ```go
-// 危険な例：レースコンディションが発生する可能性
+// ❌ 危険な例：レースコンディションが発生
 var counter int
 
 func increment() {
     counter++ // この操作は原子的ではない！
 }
 
-func main() {
+func problematicExample() {
+    var wg sync.WaitGroup
+    
+    // 1000個のGoroutineが同時にcounterを変更
     for i := 0; i < 1000; i++ {
-        go increment() // 1000個のGoroutineが同時にcounterを変更
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            increment()
+        }()
     }
-    // 結果は1000にならない可能性が高い
+    
+    wg.Wait()
+    fmt.Printf("Final counter: %d\n", counter) 
+    // 期待値: 1000
+    // 実際の結果: 500-1000の間のランダムな値（毎回異なる）
 }
 ```
 
-上記のコードで`counter++`は、実際には以下の3つのステップに分かれています：
+**なぜこの問題が発生するのか：**
 
-1. メモリからcounterの値を読み取る
-2. 値を1増加させる  
-3. 新しい値をメモリに書き戻す
+`counter++`操作は、CPUレベルでは以下の3つのステップに分解されます：
 
-複数のGoroutineが同時にこれらのステップを実行すると、古い値を読み取って上書きしてしまう可能性があります。
+```assembly
+// counter++の実際の機械語レベル処理
+1. LOAD  counter → register    // メモリから現在値を読み込み
+2. INC   register             // レジスタの値を1増加
+3. STORE register → counter   // 新しい値をメモリに書き戻し
+```
+
+**レースコンディションの発生パターン：**
+
+```
+時刻 | Goroutine A        | Goroutine B        | counter の値
+-----|-------------------|-------------------|-------------
+t1   | LOAD counter (0)  |                   | 0
+t2   |                   | LOAD counter (0)  | 0  
+t3   | INC register (1)  |                   | 0
+t4   |                   | INC register (1)  | 0
+t5   | STORE 1 → counter |                   | 1
+t6   |                   | STORE 1 → counter | 1  ← 本来は2になるべき
+```
+
+#### メモリ可視性の問題
+
+レースコンディション以外にも、メモリ可視性の問題があります：
+
+```go
+var ready bool
+var message string
+
+func writer() {
+    message = "Hello, World!"  // 1. メッセージを設定
+    ready = true              // 2. 準備完了フラグを設定
+}
+
+func reader() {
+    for !ready {              // 3. フラグを待機
+        time.Sleep(time.Millisecond)
+    }
+    fmt.Println(message)      // 4. メッセージを表示
+}
+
+// CPUキャッシュやコンパイラ最適化により、
+// 1と2の順序が入れ替わる可能性がある
+```
 
 ### sync.Mutex：基本的な排他制御
 
-`sync.Mutex`（ミューテックス）は、**一度に一つのGoroutineだけ**が特定のコードセクション（クリティカルセクション）を実行できるようにする仕組みです。
+`sync.Mutex`は、**一度に一つのGoroutineだけ**が特定のコードセクション（クリティカルセクション）を実行できるようにする排他制御機構です。
+
+#### 基本的な使用パターン
+
+```go
+import "sync"
+
+type SafeCounter struct {
+    mu    sync.Mutex
+    value int
+}
+
+func (c *SafeCounter) Increment() {
+    c.mu.Lock()         // クリティカルセクション開始
+    defer c.mu.Unlock() // 関数終了時に自動解除
+    
+    c.value++           // 安全に値を変更
+}
+
+func (c *SafeCounter) Value() int {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    
+    return c.value      // 安全に値を読み取り
+}
+```
+
+#### より実用的なMutex活用例
+
+```go
+// スレッドセーフなキャッシュシステム
+type SafeCache struct {
+    mu    sync.Mutex
+    items map[string]CacheItem
+}
+
+type CacheItem struct {
+    Value     interface{}
+    ExpiresAt time.Time
+}
+
+func NewSafeCache() *SafeCache {
+    return &SafeCache{
+        items: make(map[string]CacheItem),
+    }
+}
+
+func (c *SafeCache) Set(key string, value interface{}, ttl time.Duration) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    
+    c.items[key] = CacheItem{
+        Value:     value,
+        ExpiresAt: time.Now().Add(ttl),
+    }
+}
+
+func (c *SafeCache) Get(key string) (interface{}, bool) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    
+    item, exists := c.items[key]
+    if !exists {
+        return nil, false
+    }
+    
+    // 有効期限チェック
+    if time.Now().After(item.ExpiresAt) {
+        delete(c.items, key)
+        return nil, false
+    }
+    
+    return item.Value, true
+}
+
+func (c *SafeCache) Delete(key string) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    
+    delete(c.items, key)
+}
+
+// バックグラウンドでの期限切れアイテム清掃
+func (c *SafeCache) StartCleanup(interval time.Duration) {
+    go func() {
+        ticker := time.NewTicker(interval)
+        defer ticker.Stop()
+        
+        for range ticker.C {
+            c.cleanup()
+        }
+    }()
+}
+
+func (c *SafeCache) cleanup() {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    
+    now := time.Now()
+    for key, item := range c.items {
+        if now.After(item.ExpiresAt) {
+            delete(c.items, key)
+        }
+    }
+}
+```
+
+### sync.RWMutex：読み取り最適化型排他制御
+
+`sync.RWMutex`（Reader-Writer Mutex）は、**読み取り処理は並行実行を許可し、書き込み処理のみ排他制御**を行う高度なミューテックスです。
+
+#### RWMutexが解決する問題
+
+通常のMutexでは、読み取り専用のアクセスであっても排他制御されるため、パフォーマンスのボトルネックになります：
+
+```go
+// ❌ Mutexによる非効率な読み取り制御
+type ConfigManager struct {
+    mu     sync.Mutex
+    config map[string]string
+}
+
+func (cm *ConfigManager) GetConfig(key string) string {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+    
+    return cm.config[key]
+    // 読み取りだけなのに排他制御され、並行性が失われる
+}
+
+// 以下の処理は逐次実行される（非効率）
+func inefficientConcurrentReads(cm *ConfigManager) {
+    var wg sync.WaitGroup
+    
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            _ = cm.GetConfig("database_url") // 1つずつ順番に実行
+        }()
+    }
+    wg.Wait()
+}
+```
+
+#### RWMutexによる最適化
+
+```go
+// ✅ RWMutexによる効率的な読み書き制御
+type OptimizedConfigManager struct {
+    rwmu   sync.RWMutex
+    config map[string]string
+}
+
+func NewOptimizedConfigManager() *OptimizedConfigManager {
+    return &OptimizedConfigManager{
+        config: make(map[string]string),
+    }
+}
+
+// 読み取り操作：並行実行可能
+func (cm *OptimizedConfigManager) GetConfig(key string) string {
+    cm.rwmu.RLock()         // 読み取りロック（並行実行OK）
+    defer cm.rwmu.RUnlock()
+    
+    return cm.config[key]
+}
+
+// 複数の設定を一度に取得：並行実行可能
+func (cm *OptimizedConfigManager) GetConfigs(keys []string) map[string]string {
+    cm.rwmu.RLock()
+    defer cm.rwmu.RUnlock()
+    
+    result := make(map[string]string)
+    for _, key := range keys {
+        result[key] = cm.config[key]
+    }
+    return result
+}
+
+// 書き込み操作：排他実行
+func (cm *OptimizedConfigManager) SetConfig(key, value string) {
+    cm.rwmu.Lock()          // 書き込みロック（排他実行）
+    defer cm.rwmu.Unlock()
+    
+    cm.config[key] = value
+}
+
+// 設定の一括更新：排他実行
+func (cm *OptimizedConfigManager) UpdateConfigs(updates map[string]string) {
+    cm.rwmu.Lock()
+    defer cm.rwmu.Unlock()
+    
+    for key, value := range updates {
+        cm.config[key] = value
+    }
+}
+
+// 設定のバックアップ：読み取り中は書き込み不可
+func (cm *OptimizedConfigManager) Backup() map[string]string {
+    cm.rwmu.RLock()
+    defer cm.rwmu.RUnlock()
+    
+    backup := make(map[string]string)
+    for key, value := range cm.config {
+        backup[key] = value
+    }
+    return backup
+}
+```
+
+#### 実用的なRWMutex活用例：統計情報収集システム
+
+```go
+// 高頻度読み取り、低頻度書き込みの統計システム
+type MetricsCollector struct {
+    rwmu    sync.RWMutex
+    metrics map[string]MetricData
+}
+
+type MetricData struct {
+    Count       int64
+    Sum         float64
+    Min         float64
+    Max         float64
+    LastUpdated time.Time
+}
+
+func NewMetricsCollector() *MetricsCollector {
+    return &MetricsCollector{
+        metrics: make(map[string]MetricData),
+    }
+}
+
+// 高頻度の読み取り操作（並行実行）
+func (mc *MetricsCollector) GetMetric(name string) (MetricData, bool) {
+    mc.rwmu.RLock()
+    defer mc.rwmu.RUnlock()
+    
+    metric, exists := mc.metrics[name]
+    return metric, exists
+}
+
+// 全メトリクスの取得（並行実行可能）
+func (mc *MetricsCollector) GetAllMetrics() map[string]MetricData {
+    mc.rwmu.RLock()
+    defer mc.rwmu.RUnlock()
+    
+    result := make(map[string]MetricData)
+    for name, metric := range mc.metrics {
+        result[name] = metric
+    }
+    return result
+}
+
+// メトリクスの平均値計算（読み取り専用、並行実行可能）
+func (mc *MetricsCollector) GetAverage(name string) float64 {
+    mc.rwmu.RLock()
+    defer mc.rwmu.RUnlock()
+    
+    metric, exists := mc.metrics[name]
+    if !exists || metric.Count == 0 {
+        return 0
+    }
+    
+    return metric.Sum / float64(metric.Count)
+}
+
+// 低頻度の書き込み操作（排他実行）
+func (mc *MetricsCollector) RecordValue(name string, value float64) {
+    mc.rwmu.Lock()
+    defer mc.rwmu.Unlock()
+    
+    metric, exists := mc.metrics[name]
+    if !exists {
+        mc.metrics[name] = MetricData{
+            Count:       1,
+            Sum:         value,
+            Min:         value,
+            Max:         value,
+            LastUpdated: time.Now(),
+        }
+        return
+    }
+    
+    // 既存メトリクスの更新
+    metric.Count++
+    metric.Sum += value
+    if value < metric.Min {
+        metric.Min = value
+    }
+    if value > metric.Max {
+        metric.Max = value
+    }
+    metric.LastUpdated = time.Now()
+    
+    mc.metrics[name] = metric
+}
+
+// 古いメトリクスの削除（書き込み操作）
+func (mc *MetricsCollector) CleanupOldMetrics(maxAge time.Duration) int {
+    mc.rwmu.Lock()
+    defer mc.rwmu.Unlock()
+    
+    cutoff := time.Now().Add(-maxAge)
+    deletedCount := 0
+    
+    for name, metric := range mc.metrics {
+        if metric.LastUpdated.Before(cutoff) {
+            delete(mc.metrics, name)
+            deletedCount++
+        }
+    }
+    
+    return deletedCount
+}
+```
+
+#### RWMutexのパフォーマンス特性
+
+```go
+// パフォーマンステスト用のデータ構造
+type PerformanceTestData struct {
+    mutex   sync.Mutex
+    rwMutex sync.RWMutex
+    data    map[int]string
+}
+
+func NewPerformanceTestData() *PerformanceTestData {
+    data := make(map[int]string)
+    for i := 0; i < 1000; i++ {
+        data[i] = fmt.Sprintf("value_%d", i)
+    }
+    
+    return &PerformanceTestData{
+        data: data,
+    }
+}
+
+// Mutexを使った読み取り（すべて排他実行）
+func (ptd *PerformanceTestData) ReadWithMutex(key int) string {
+    ptd.mutex.Lock()
+    defer ptd.mutex.Unlock()
+    
+    return ptd.data[key]
+}
+
+// RWMutexを使った読み取り（並行実行可能）
+func (ptd *PerformanceTestData) ReadWithRWMutex(key int) string {
+    ptd.rwMutex.RLock()
+    defer ptd.rwMutex.RUnlock()
+    
+    return ptd.data[key]
+}
+
+// パフォーマンス比較テスト
+func BenchmarkMutexReads(b *testing.B) {
+    data := NewPerformanceTestData()
+    
+    b.RunParallel(func(pb *testing.PB) {
+        for pb.Next() {
+            _ = data.ReadWithMutex(rand.Intn(1000))
+        }
+    })
+}
+
+func BenchmarkRWMutexReads(b *testing.B) {
+    data := NewPerformanceTestData()
+    
+    b.RunParallel(func(pb *testing.PB) {
+        for pb.Next() {
+            _ = data.ReadWithRWMutex(rand.Intn(1000))
+        }
+    })
+}
+
+// 期待される結果:
+// BenchmarkMutexReads-8      1000000    1500 ns/op
+// BenchmarkRWMutexReads-8   10000000     150 ns/op
+// → RWMutexが約10倍高速（読み取り専用ワークロード）
+```
+
+### Mutex vs RWMutex の使い分け指針
+
+#### Mutexを選ぶべき場合
+
+1. **書き込み頻度が高い**: 読み取りと書き込みが同程度の頻度
+2. **クリティカルセクションが短い**: ロック時間が非常に短い
+3. **シンプルな実装が優先**: 可読性とメンテナンス性重視
+
+```go
+// 書き込み頻度が高い場合はMutexの方が効率的
+type Counter struct {
+    mu    sync.Mutex
+    value int64
+}
+
+func (c *Counter) Increment() {
+    c.mu.Lock()
+    c.value++
+    c.mu.Unlock()
+}
+
+func (c *Counter) Value() int64 {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.value
+}
+```
+
+#### RWMutexを選ぶべき場合
+
+1. **読み取り頻度が圧倒的に高い**: 読み取り：書き込み = 10：1以上
+2. **クリティカルセクションが長い**: データベースアクセスやファイルI/O
+3. **並行性が重要**: 高いスループットが要求される
+
+```go
+// 設定管理、キャッシュ、統計データなど
+type ReadHeavyCache struct {
+    rwmu sync.RWMutex
+    data map[string]interface{}
+}
+```
+
+### デッドロック防止パターン
+
+#### ロック順序の統一
+
+```go
+type BankAccount struct {
+    mu      sync.Mutex
+    id      int
+    balance float64
+}
+
+// ❌ デッドロックが発生する可能性
+func dangerousTransfer(from, to *BankAccount, amount float64) {
+    from.mu.Lock()
+    to.mu.Lock()     // ロック順序が一定でない
+    
+    from.balance -= amount
+    to.balance += amount
+    
+    to.mu.Unlock()
+    from.mu.Unlock()
+}
+
+// ✅ デッドロックを防ぐ安全な実装
+func safeTransfer(from, to *BankAccount, amount float64) {
+    // IDの小さい順にロックを取得（順序の統一）
+    first, second := from, to
+    if from.id > to.id {
+        first, second = to, from
+    }
+    
+    first.mu.Lock()
+    second.mu.Lock()
+    
+    from.balance -= amount
+    to.balance += amount
+    
+    second.mu.Unlock()
+    first.mu.Unlock()
+}
+```
+
+#### タイムアウト付きロック（context使用）
+
+```go
+type TimeoutMutex struct {
+    ch chan struct{}
+}
+
+func NewTimeoutMutex() *TimeoutMutex {
+    return &TimeoutMutex{
+        ch: make(chan struct{}, 1),
+    }
+}
+
+func (tm *TimeoutMutex) TryLock(ctx context.Context) error {
+    select {
+    case tm.ch <- struct{}{}:
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+}
+
+func (tm *TimeoutMutex) Unlock() {
+    select {
+    case <-tm.ch:
+    default:
+        panic("unlock of unlocked mutex")
+    }
+}
+
+// 使用例
+func safeOperationWithTimeout() error {
+    tm := NewTimeoutMutex()
+    
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    
+    if err := tm.TryLock(ctx); err != nil {
+        return fmt.Errorf("failed to acquire lock: %w", err)
+    }
+    defer tm.Unlock()
+    
+    // クリティカルセクション
+    time.Sleep(2 * time.Second)
+    
+    return nil
+}
+```
 
 ```go
 import "sync"
