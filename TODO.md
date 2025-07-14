@@ -268,74 +268,74 @@
     - [x] 実装漏れがないか最終チェック
 - [x] **Day 36: Dataloaderパターン:** N+1問題を効率的に解決するためのデータローダーを実装する。
     - [x] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 37: DBコネクションプールの設定:** `sql.DB`のコネクションプール設定を調整し、パフォーマンスを最適化する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 38: DBインデックスの活用:** クエリを高速化するためのインデックスの効果を`EXPLAIN`で確認する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 39: `sqlx`による効率的なDB操作:** `database/sql`の煩雑さを`sqlx`で解消する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 40: Read-Replicaへの分散:** 更新系と参照系のクエリを別のDBに振り分けるロジックを実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 41: Redisによるキャッシュ層の実装:** `go-redis`を使い、Redisに接続する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 42: Cache-Aside パターン:** キャッシュにデータがなければDBから取得し、キャッシュに格納する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 43: Write-Through パターン:** DBへの書き込みと同時にキャッシュも更新する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 44: キャッシュ無効化戦略:** DB更新時に、関連するキャッシュを削除または更新する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 45: Thundering Herd 問題の対策:** キャッシュ切れの際に、単一のプロセスのみがDBにアクセスするよう制御する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 37: DBコネクションプールの設定:** `sql.DB`のコネクションプール設定を調整し、パフォーマンスを最適化する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 38: DBインデックスの活用:** クエリを高速化するためのインデックスの効果を`EXPLAIN`で確認する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 39: `sqlx`による効率的なDB操作:** `database/sql`の煩雑さを`sqlx`で解消する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 40: Read-Replicaへの分散:** 更新系と参照系のクエリを別のDBに振り分けるロジックを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 41: Redisによるキャッシュ層の実装:** `go-redis`を使い、Redisに接続する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 42: Cache-Aside パターン:** キャッシュにデータがなければDBから取得し、キャッシュに格納する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 43: Write-Through パターン:** DBへの書き込みと同時にキャッシュも更新する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 44: キャッシュ無効化戦略:** DB更新時に、関連するキャッシュを削除または更新する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 45: Thundering Herd 問題の対策:** キャッシュ切れの際に、単一のプロセスのみがDBにアクセスするよう制御する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 
 </details>
 
@@ -344,110 +344,110 @@
 <details>
 <summary>Days 46-60 のタスクリスト</summary>
 
-- [ ] **Day 46: gRPCのエラーハンドリング:** `status`パッケージを使い、gRPCで詳細なエラー情報を返す。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 47: gRPCサーバーサイドストリーミング:** サーバーからクライアントへ複数のレスポンスを継続的に送信する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 48: gRPCクライアントサイドストリーミング:** クライアントからサーバーへ複数のリクエストを継続的に送信する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 49: gRPC双方向ストリーミング:** サーバーとクライアントが同時にメッセージを送り合う。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 50: Unaryインターセプタ:** 全てのUnary RPCで共通の処理（ログ、認証）を挟み込む。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 51: Streamインターセプタ:** 全てのStream RPCで共通の処理を挟み込む。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 52: gRPCメタデータによる情報伝播:** リクエストIDなどをgRPCのメタデータでサービス間に引き渡す。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 53: 冪等なメッセージコンシューマー:** 同じメッセージを複数回受信しても結果が変わらないコンシューマーを設計する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 54: Dead-Letter Queue (DLQ):** 処理に失敗し続けるメッセージを隔離する仕組みをRabbitMQで実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 55: メッセージ順序保証の課題:** メッセージの処理順序が重要なケースとその対策を考える。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 56: 競合コンシューマーパターン:** 同じキューを複数のコンシューマーで処理させ、スループットを向上させる。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 57: Prometheusによるカスタムメトリクス:** HTTPリクエスト数などのカスタムメトリクスを実装・公開する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 58: Prometheusのヒストグラム:** リクエストのレイテンシ分布を計測するヒストグラムを実装する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 59: OpenTelemetryによる分散トレーシング入門:** サービスをまたぐリクエストのトレース情報を設定・出力する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
-- [ ] **Day 60: 総集編:** `slog`, Prometheus, OpenTelemetryを導入したミニAPIサービスを構築する。
-    - [ ] README作成
-    - [ ] main.goで問題を作成
-    - [ ] main_test.go実装
-    - [ ] main_solution.go実装
-    - [ ] テストが通るか確認
-    - [ ] 実装漏れがないか最終チェック
+- [x] **Day 46: gRPCのエラーハンドリング:** `status`パッケージを使い、gRPCで詳細なエラー情報を返す。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 47: gRPCサーバーサイドストリーミング:** サーバーからクライアントへ複数のレスポンスを継続的に送信する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 48: gRPCクライアントサイドストリーミング:** クライアントからサーバーへ複数のリクエストを継続的に送信する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 49: gRPC双方向ストリーミング:** サーバーとクライアントが同時にメッセージを送り合う。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 50: Unaryインターセプタ:** 全てのUnary RPCで共通の処理（ログ、認証）を挟み込む。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 51: Streamインターセプタ:** 全てのStream RPCで共通の処理を挟み込む。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 52: gRPCメタデータによる情報伝播:** リクエストIDなどをgRPCのメタデータでサービス間に引き渡す。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 53: Pub/Subパターン:** メッセージキューイングを使用した非同期通信パターンを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 54: Dead-Letter Queue (DLQ):** 処理に失敗し続けるメッセージを隔離する仕組みを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 55: メッセージ順序保証:** メッセージの処理順序が重要なケースとその対策を実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 56: 競合コンシューマーパターン:** 同じキューを複数のコンシューマーで処理させ、スループットを向上させる。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 57: Prometheusによるカスタムメトリクス:** HTTPリクエスト数などのカスタムメトリクスを実装・公開する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 58: Prometheusのヒストグラム:** リクエストのレイテンシ分布を計測するヒストグラムを実装する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 59: OpenTelemetryによる分散トレーシング:** サービスをまたぐリクエストのトレース情報を設定・出力する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
+- [x] **Day 60: 総集編:** `slog`, Prometheus, OpenTelemetryを導入したプロダクションレベルのマイクロサービスを構築する。
+    - [x] README作成
+    - [x] main.goで問題を作成
+    - [x] main_test.go実装
+    - [x] main_solution.go実装
+    - [x] テストが通るか確認
+    - [x] 実装漏れがないか最終チェック
 
 </details>
