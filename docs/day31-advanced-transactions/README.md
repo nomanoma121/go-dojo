@@ -1,20 +1,236 @@
-# Day 31: 高度なトランザクション管理
+# Day 31: 高度なトランザクション管理実装
 
-🎯 **本日の目標**
+## 🎯 本日の目標
 
-複数のDB操作を単一のトランザクションにまとめ、エラー時に適切にロールバックする高度なトランザクション制御を実装できるようになる。
+複数のDB操作を単一のトランザクションにまとめ、エラー時に適切にロールバックする高度なトランザクション制御を実装する。セーブポイント、楽観的ロック、デッドロック対策など、実用的なシナリオを通じて、本格的なデータベースアプリケーションに必要な技術を習得する。
 
-📖 **解説**
+## 📖 解説
 
-## トランザクション管理の基礎
+### トランザクション管理の重要性
 
-データベースのトランザクションは、複数の操作を一つの論理的な単位として扱い、ACID特性を保証する仕組みです。
+データベースのトランザクションは、**複数の操作を一つの論理的な単位として扱い、ACID特性を保証する仕組み**です。これにより、システム障害やアプリケーションエラーが発生しても、データの整合性を維持できます。
 
-### ACID特性
-- **Atomicity（原子性）**: すべての操作が成功するか、すべて失敗するか
-- **Consistency（一貫性）**: データベースの整合性が保たれる
-- **Isolation（分離性）**: 並行実行される他のトランザクションから影響を受けない
-- **Durability（永続性）**: コミット後のデータは永続的に保存される
+**トランザクションなしの問題例：**
+
+```go
+// ❌ トランザクションなしの危険な実装
+func transferMoneyUnsafe(db *sql.DB, fromAccountID, toAccountID int, amount decimal.Decimal) error {
+    // 1. 送金元から引出
+    _, err := db.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, fromAccountID)
+    if err != nil {
+        return err
+    }
+    
+    // ここでシステム障害が発生すると...
+    // 送金元からお金が消え、送金先には届かない！
+    
+    // 2. 送金先に入金
+    _, err = db.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, toAccountID)
+    if err != nil {
+        // ロールバックできない！データ不整合が発生
+        return err
+    }
+    
+    return nil
+}
+```
+
+**トランザクションによる改善：**
+
+```go
+// ✅ トランザクションによる安全な実装
+func transferMoneySafe(db *sql.DB, fromAccountID, toAccountID int, amount decimal.Decimal) error {
+    tx, err := db.Begin()
+    if err != nil {
+        return err
+    }
+    defer func() {
+        if p := recover(); p != nil {
+            tx.Rollback()
+            panic(p) // re-throw panic after Rollback
+        } else if err != nil {
+            tx.Rollback() // エラー時は自動ロールバック
+        } else {
+            err = tx.Commit() // 成功時はコミット
+        }
+    }()
+    
+    // 1. 送金元から引出
+    _, err = tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, fromAccountID)
+    if err != nil {
+        return err
+    }
+    
+    // 2. 送金先に入金
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, toAccountID)
+    if err != nil {
+        return err
+    }
+    
+    // 両方成功時のみコミット
+    return nil
+}
+```
+
+### ACID特性の詳細理解
+
+#### **Atomicity（原子性）**
+
+すべての操作が成功するか、すべて失敗するかの「オールオアナッシング」原則：
+
+```go
+func demonstrateAtomicity(db *sql.DB) error {
+    tx, err := db.Begin()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback() // 明示的にCommitされない限り、常にRollback
+    
+    // 複数の関連操作
+    operations := []string{
+        "INSERT INTO orders (customer_id, total) VALUES (1, 100.00)",
+        "INSERT INTO order_items (order_id, product_id, quantity) VALUES (1, 1, 2)", 
+        "UPDATE inventory SET quantity = quantity - 2 WHERE product_id = 1",
+        "INSERT INTO audit_log (action, timestamp) VALUES ('ORDER_CREATED', NOW())",
+    }
+    
+    for i, operation := range operations {
+        _, err := tx.Exec(operation)
+        if err != nil {
+            // どこか1つでも失敗したら、全て取り消される
+            return fmt.Errorf("operation %d failed: %w", i, err)
+        }
+    }
+    
+    // 全て成功した場合のみコミット
+    return tx.Commit()
+}
+```
+
+#### **Consistency（一貫性）**
+
+データベースの制約や業務ルールが常に保たれる状態：
+
+```go
+func demonstrateConsistency(db *sql.DB) error {
+    tx, err := db.Begin()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+    
+    // 業務制約: アカウント残高は必ず0以上でなければならない
+    var currentBalance decimal.Decimal
+    err = tx.QueryRow("SELECT balance FROM accounts WHERE id = ? FOR UPDATE", 1).Scan(&currentBalance)
+    if err != nil {
+        return err
+    }
+    
+    withdrawAmount := decimal.NewFromFloat(150.00)
+    
+    // 制約チェック
+    if currentBalance.LessThan(withdrawAmount) {
+        return fmt.Errorf("insufficient balance: current=%v, requested=%v", 
+            currentBalance, withdrawAmount)
+    }
+    
+    // 制約を満たす場合のみ実行
+    _, err = tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", 
+        withdrawAmount, 1)
+    if err != nil {
+        return err
+    }
+    
+    return tx.Commit()
+}
+```
+
+#### **Isolation（分離性）**
+
+並行実行される他のトランザクションからの分離：
+
+```go
+func demonstrateIsolation(db *sql.DB) {
+    // 分離レベルの設定例
+    isolationLevels := []sql.IsolationLevel{
+        sql.LevelReadUncommitted, // ダーティリード可能
+        sql.LevelReadCommitted,   // ダーティリード不可、ファントムリード可能  
+        sql.LevelRepeatableRead,  // ファントムリード不可、MySQL InnoDBのデフォルト
+        sql.LevelSerializable,    // 最も厳格、性能低下あり
+    }
+    
+    for _, level := range isolationLevels {
+        err := demonstrateIsolationLevel(db, level)
+        if err != nil {
+            log.Printf("Isolation level %v failed: %v", level, err)
+        }
+    }
+}
+
+func demonstrateIsolationLevel(db *sql.DB, level sql.IsolationLevel) error {
+    tx, err := db.BeginTx(context.Background(), &sql.TxOptions{
+        Isolation: level,
+    })
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+    
+    // 分離レベルに応じて異なる動作を示す
+    var count int
+    err = tx.QueryRow("SELECT COUNT(*) FROM accounts WHERE balance > 1000").Scan(&count)
+    if err != nil {
+        return err
+    }
+    
+    fmt.Printf("Isolation %v: Found %d accounts with balance > 1000\n", level, count)
+    return tx.Commit()
+}
+```
+
+#### **Durability（永続性）**
+
+コミット後のデータは永続的に保存される：
+
+```go
+func demonstrateDurability(db *sql.DB) error {
+    // WAL（Write-Ahead Logging）の確認
+    tx, err := db.Begin()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+    
+    // 重要なデータの永続化
+    result, err := tx.Exec(`
+        INSERT INTO critical_transactions (id, amount, timestamp, checksum) 
+        VALUES (?, ?, ?, ?)
+    `, uuid.New(), 1000.00, time.Now(), generateChecksum())
+    
+    if err != nil {
+        return err
+    }
+    
+    // コミット時にディスクに書き込み保証
+    err = tx.Commit()
+    if err != nil {
+        return err
+    }
+    
+    // コミット成功 = データの永続化保証
+    rowsAffected, _ := result.RowsAffected()
+    fmt.Printf("Durability guaranteed: %d rows permanently stored\n", rowsAffected)
+    
+    return nil
+}
+
+func generateChecksum() string {
+    // データ整合性チェック用のチェックサム
+    h := sha256.New()
+    h.Write([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+    return fmt.Sprintf("%x", h.Sum(nil))[:16]
+}
+```
 
 ### Goでのトランザクション制御
 
