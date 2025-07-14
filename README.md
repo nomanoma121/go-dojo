@@ -11,10 +11,13 @@
 
 ```
 go-dojo/
-├── day01-context-cancellation/    # Day 01: Contextによるキャンセル伝播
-├── day02-context-timeout/         # Day 02: Contextによるタイムアウト/デッドライン
-├── day03-mutex-vs-rwmutex/        # Day 03: sync.Mutex vs RWMutex
-├── ...                            # Day 04-60の課題
+├── docs/
+│   ├── day00-prerequisites/       # Day 00: 入門前の基礎知識確認
+│   ├── day01-context-cancellation/ # Day 01: Contextによるキャンセル伝播
+│   ├── day02-context-timeout/     # Day 02: Contextによるタイムアウト/デッドライン
+│   ├── day03-mutex-vs-rwmutex/    # Day 03: sync.Mutex vs RWMutex
+│   ├── ...                        # Day 04-60の課題
+│   └── day60-final-integration/   # Day 60: 総集編 - Production-Ready Microservice
 ├── lib/                           # 複数の課題で共通して使う便利コード
 │   └── tester/                    # dockertestを使ったDBセットアップヘルパー
 ├── tools/                         # 開発支援ツール
@@ -25,6 +28,9 @@ go-dojo/
 ```
 
 ## カリキュラム概要
+
+### Day 0: 入門前準備
+- Go言語基礎の確認、HTTP API開発、データベース操作、テスト作成、並行処理の理解
 
 ### Days 1-15: 高度な並行処理とデザインパターン
 - Context、Mutex、Worker Pool、Pipeline、Rate Limiterなど
@@ -38,7 +44,19 @@ go-dojo/
 ### Days 46-60: 分散システムと可観測性
 - gRPC、メッセージキュー、Prometheus、OpenTelemetryなど
 
-## 使い方
+## 📚 学習の始め方
+
+### Step 0: 準備確認（重要！）
+
+**Go道場を始める前に、必ず [Day 0: 入門前準備](docs/day00-prerequisites/README.md) で基礎知識をチェックしてください。**
+
+- 基本的なGo言語スキル
+- HTTP API開発の基礎
+- データベース操作
+- テスト作成
+- 並行処理の理解
+
+### Step 1: カリキュラム開始
 
 1. 各日のディレクトリに移動
 2. README.mdで課題内容を確認
