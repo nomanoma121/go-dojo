@@ -5,8 +5,11 @@
 # MEMO.mdで内容を確認し、@TODO.mdの内容を実装しチェックを入れていってください。
 -----ここをかならずよめ------
 
-
-適宜コミットすること
+# 必読
+- TODO.mdで必ず実装内容を確認する
+- MEMO.mdで内容を確認する
+- 進捗をTODO.mdで管理する
+- 適宜コミットすること
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
