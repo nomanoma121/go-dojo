@@ -18,7 +18,7 @@
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 03: `sync.Mutex` vs `RWMutex`**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
@@ -201,13 +201,13 @@
 <summary>Days 31-45 のタスクリスト</summary>
 
 - [ ] **Day 31: 高度なトランザクション管理**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 32: 指数バックオフリトライ**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
@@ -225,13 +225,13 @@
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 35: N+1問題の解決**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 36: Dataloaderパターン**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
@@ -305,13 +305,13 @@
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 47: gRPCサーバーサイドストリーミング**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 48: gRPCクライアントサイドストリーミング**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
