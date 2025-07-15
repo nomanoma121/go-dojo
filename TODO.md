@@ -237,13 +237,13 @@
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 37: DBコネクションプールの設定**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
     - [ ] テストが通るか確認
 - [ ] **Day 38: DBインデックスの活用**
-    - [ ] READMEの解説は丁寧で詳細か
+    - [x] READMEの解説は丁寧で詳細か
     - [ ] `main.go`で問題を作成
     - [ ] `main_test.go`を実装
     - [ ] `main_solution.go`を実装
