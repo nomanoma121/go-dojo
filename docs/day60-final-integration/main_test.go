@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestLoggerInitialization(t *testing.T) {
@@ -422,7 +421,7 @@ func TestTracesHandler(t *testing.T) {
 	apiServer := NewAPIServer(userService, orderService, metrics, tracer)
 	
 	// いくつかのスパンを作成
-	ctx, span := tracer.StartSpan(context.Background(), "test-operation")
+	_, span := tracer.StartSpan(context.Background(), "test-operation")
 	span.SetTag("test.key", "test.value")
 	span.Finish()
 	

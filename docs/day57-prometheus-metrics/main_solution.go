@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -371,7 +370,7 @@ func PrometheusMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		
 		// レスポンスライターをラップ
-		ww := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		ww := &responseWriterSolution{ResponseWriter: w, statusCode: http.StatusOK}
 		
 		// 次のハンドラを実行
 		next.ServeHTTP(ww, r)
@@ -385,18 +384,18 @@ func PrometheusMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-type responseWriter struct {
+type responseWriterSolution struct {
 	http.ResponseWriter
 	statusCode int
 	size       int
 }
 
-func (rw *responseWriter) WriteHeader(code int) {
+func (rw *responseWriterSolution) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-func (rw *responseWriter) Write(b []byte) (int, error) {
+func (rw *responseWriterSolution) Write(b []byte) (int, error) {
 	size, err := rw.ResponseWriter.Write(b)
 	rw.size += size
 	return size, err
@@ -592,7 +591,7 @@ func joinLabels(values []string) string {
 	return fmt.Sprintf("%v", values)
 }
 
-func main() {
+func mainSolution() {
 	fmt.Println("Day 57: Prometheus Custom Metrics")
 	
 	// メトリクス収集器を初期化

@@ -272,7 +272,7 @@ func (t *RequestLatencyTracker) Middleware(next http.Handler) http.Handler {
 		start := time.Now()
 		
 		// レスポンスライターをラップしてステータスコードを取得
-		wrappedWriter := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		wrappedWriter := &responseWriterSolution{ResponseWriter: w, statusCode: http.StatusOK}
 		
 		// 次のハンドラを実行
 		next.ServeHTTP(wrappedWriter, r)
@@ -285,29 +285,29 @@ func (t *RequestLatencyTracker) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-type responseWriter struct {
+type responseWriterSolution struct {
 	http.ResponseWriter
 	statusCode int
 }
 
-func (rw *responseWriter) WriteHeader(code int) {
+func (rw *responseWriterSolution) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// PerformanceAnalyzer パフォーマンス分析器
-type PerformanceAnalyzer struct {
+// PerformanceAnalyzerSolution パフォーマンス分析器
+type PerformanceAnalyzerSolution struct {
 	tracker *RequestLatencyTracker
 }
 
-func NewPerformanceAnalyzer(tracker *RequestLatencyTracker) *PerformanceAnalyzer {
-	return &PerformanceAnalyzer{
+func NewPerformanceAnalyzerSolution(tracker *RequestLatencyTracker) *PerformanceAnalyzerSolution {
+	return &PerformanceAnalyzerSolution{
 		tracker: tracker,
 	}
 }
 
 // AnalyzePerformance パフォーマンス分析を実行
-func (pa *PerformanceAnalyzer) AnalyzePerformance() PerformanceReport {
+func (pa *PerformanceAnalyzerSolution) AnalyzePerformance() PerformanceReport {
 	stats := pa.tracker.GetStats()
 	
 	report := PerformanceReport{
@@ -428,7 +428,7 @@ type MetricsServer struct {
 }
 
 func NewMetricsServer(tracker *RequestLatencyTracker) *MetricsServer {
-	analyzer := NewPerformanceAnalyzer(tracker)
+	analyzer := NewPerformanceAnalyzerSolution(tracker)
 	mux := http.NewServeMux()
 	
 	server := &MetricsServer{
@@ -649,7 +649,7 @@ func createSampleHandlers() http.Handler {
 	return mux
 }
 
-func main() {
+func mainSolution() {
 	fmt.Println("Day 58: Prometheus Histogram")
 	fmt.Println("Run 'go test -v' to see the histogram system in action")
 	

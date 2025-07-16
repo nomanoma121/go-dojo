@@ -344,10 +344,10 @@ func TestConcurrentTracing(t *testing.T) {
 		go func(id int) {
 			defer func() { done <- true }()
 			
-			ctx := context.Background()
+			_ = context.Background()
 			
 			for j := 0; j < numOperations; j++ {
-				ctx, span := tracer.Start(ctx, fmt.Sprintf("operation_%d_%d", id, j))
+				_, span := tracer.Start(context.Background(), fmt.Sprintf("operation_%d_%d", id, j))
 				
 				span.SetAttribute(StringAttribute("goroutine.id", fmt.Sprintf("%d", id)))
 				span.SetAttribute(IntAttribute("operation.number", j))
