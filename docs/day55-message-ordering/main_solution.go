@@ -574,6 +574,106 @@ func (d *OrderViolationDetector) GetViolationCount() int {
 	return len(d.violations)
 }
 
+// OrderedMessage テスト用の順序付きメッセージ
+type OrderedMessage struct {
+	ID           string `json:"id"`
+	PartitionKey string `json:"partition_key"`
+	Data         []byte `json:"data"`
+	Sequence     int64  `json:"sequence"`
+}
+
+// HashPartitioner ハッシュベースパーティショナー
+type HashPartitioner struct {
+	partitions int
+}
+
+func NewHashPartitioner(partitions int) *HashPartitioner {
+	return &HashPartitioner{
+		partitions: partitions,
+	}
+}
+
+func (h *HashPartitioner) GetPartition(key string) int {
+	if h.partitions <= 0 {
+		return 0
+	}
+	hash := 0
+	for _, c := range key {
+		hash = hash*31 + int(c)
+	}
+	if hash < 0 {
+		hash = -hash
+	}
+	return hash % h.partitions
+}
+
+// PartitionedQueue パーティション分割キュー
+type PartitionedQueue struct {
+	partitions  int
+	partitioner *HashPartitioner
+	queues      []chan *OrderedMessage
+	consumers   map[int]*OrderedConsumer
+	mu          sync.RWMutex
+}
+
+func NewPartitionedQueue(partitions int, partitioner *HashPartitioner) *PartitionedQueue {
+	queues := make([]chan *OrderedMessage, partitions)
+	for i := range queues {
+		queues[i] = make(chan *OrderedMessage, 100)
+	}
+	
+	return &PartitionedQueue{
+		partitions:  partitions,
+		partitioner: partitioner,
+		queues:      queues,
+		consumers:   make(map[int]*OrderedConsumer),
+	}
+}
+
+func (pq *PartitionedQueue) Send(message *OrderedMessage) error {
+	partition := pq.partitioner.GetPartition(message.PartitionKey)
+	select {
+	case pq.queues[partition] <- message:
+		return nil
+	default:
+		return fmt.Errorf("queue full for partition %d", partition)
+	}
+}
+
+func (pq *PartitionedQueue) AddConsumer(partition int, consumer *OrderedConsumer) {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+	pq.consumers[partition] = consumer
+	consumer.queue = pq.queues[partition]
+}
+
+// OrderedConsumer 順序保証コンシューマー
+type OrderedConsumer struct {
+	name    string
+	handler func(context.Context, *OrderedMessage) error
+	queue   chan *OrderedMessage
+}
+
+func NewOrderedConsumer(name string, handler func(context.Context, *OrderedMessage) error) *OrderedConsumer {
+	return &OrderedConsumer{
+		name:    name,
+		handler: handler,
+	}
+}
+
+func (oc *OrderedConsumer) Start(ctx context.Context) {
+	for {
+		select {
+		case msg := <-oc.queue:
+			if msg != nil {
+				oc.handler(ctx, msg)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func main() {
 	fmt.Println("Day 55: メッセージ順序保証")
 	fmt.Println("Run 'go test -v' to see the message ordering system in action")

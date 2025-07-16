@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -550,6 +551,372 @@ func (d *PoisonMessageDetector) DetectPoisonMessage(ctx context.Context, msg *Me
 	}
 	
 	return false, ""
+}
+
+// ErrorClassification エラー分類
+type ErrorClassification int
+
+const (
+	TemporaryError ErrorClassification = iota
+	PermanentError
+	ValidationError
+	SecurityError
+	TimeoutError
+)
+
+// DLQMessage テスト用のDLQメッセージ構造体
+type DLQMessage struct {
+	OriginalMessage *Message             `json:"original_message"`
+	FailureReason   string               `json:"failure_reason"`
+	ErrorClass      ErrorClassification  `json:"error_class"`
+	FailureCount    int                  `json:"failure_count"`
+	FirstFailure    time.Time            `json:"first_failure"`
+	LastFailure     time.Time            `json:"last_failure"`
+}
+
+// ExponentialBackoffReprocessing 指数バックオフ再処理戦略
+type ExponentialBackoffReprocessing struct {
+	BaseDelay   time.Duration
+	MaxDelay    time.Duration
+	MaxAttempts int
+	Multiplier  float64
+}
+
+func (s *ExponentialBackoffReprocessing) ShouldReprocess(dlqMsg *DLQMessage) bool {
+	// 永続エラーは再処理しない
+	if dlqMsg.ErrorClass == PermanentError {
+		return false
+	}
+	
+	// 最大試行回数チェック
+	if dlqMsg.FailureCount >= s.MaxAttempts {
+		return false
+	}
+	
+	return true
+}
+
+func (s *ExponentialBackoffReprocessing) NextAttemptTime(dlqMsg *DLQMessage) time.Time {
+	delay := time.Duration(float64(s.BaseDelay) * pow(s.Multiplier, float64(dlqMsg.FailureCount)))
+	if delay > s.MaxDelay {
+		delay = s.MaxDelay
+	}
+	return dlqMsg.LastFailure.Add(delay)
+}
+
+func pow(base, exp float64) float64 {
+	if exp == 0 {
+		return 1
+	}
+	result := base
+	for i := 1; i < int(exp); i++ {
+		result *= base
+	}
+	return result
+}
+
+// DeadLetterQueueTest テスト用のDLQ実装
+type DeadLetterQueueTest struct {
+	messages map[string]*DLQMessage
+	strategy *ExponentialBackoffReprocessing
+	mu       sync.RWMutex
+}
+
+func NewDeadLetterQueue(strategy *ExponentialBackoffReprocessing) *DeadLetterQueueTest {
+	return &DeadLetterQueueTest{
+		messages: make(map[string]*DLQMessage),
+		strategy: strategy,
+	}
+}
+
+func (dlq *DeadLetterQueueTest) Send(ctx context.Context, dlqMsg *DLQMessage) error {
+	dlq.mu.Lock()
+	defer dlq.mu.Unlock()
+	dlq.messages[dlqMsg.OriginalMessage.ID] = dlqMsg
+	return nil
+}
+
+func (dlq *DeadLetterQueueTest) GetMessage(messageID string) (*DLQMessage, bool) {
+	dlq.mu.RLock()
+	defer dlq.mu.RUnlock()
+	msg, exists := dlq.messages[messageID]
+	return msg, exists
+}
+
+func (dlq *DeadLetterQueueTest) RemoveMessage(messageID string) error {
+	dlq.mu.Lock()
+	defer dlq.mu.Unlock()
+	delete(dlq.messages, messageID)
+	return nil
+}
+
+func (dlq *DeadLetterQueueTest) GetAnalytics() *DLQAnalytics {
+	dlq.mu.RLock()
+	defer dlq.mu.RUnlock()
+	
+	analytics := &DLQAnalytics{
+		TotalMessages:   len(dlq.messages),
+		ErrorBreakdown:  make(map[ErrorClassification]int),
+		TopicBreakdown:  make(map[string]int),
+		AverageRetries:  0,
+		OldestMessage:   nil,
+	}
+	
+	if len(dlq.messages) == 0 {
+		return analytics
+	}
+	
+	totalRetries := 0
+	var oldestTime time.Time
+	var oldestMsg *DLQMessage
+	first := true
+	
+	for _, msg := range dlq.messages {
+		analytics.ErrorBreakdown[msg.ErrorClass]++
+		analytics.TopicBreakdown[msg.OriginalMessage.Topic]++
+		totalRetries += msg.FailureCount
+		
+		if first || msg.FirstFailure.Before(oldestTime) {
+			oldestTime = msg.FirstFailure
+			oldestMsg = msg
+			first = false
+		}
+	}
+	
+	analytics.AverageRetries = float64(totalRetries) / float64(len(dlq.messages))
+	analytics.OldestMessage = oldestMsg
+	
+	return analytics
+}
+
+// DLQAnalytics DLQ分析データ
+type DLQAnalytics struct {
+	TotalMessages   int                              `json:"total_messages"`
+	ErrorBreakdown  map[ErrorClassification]int      `json:"error_breakdown"`
+	TopicBreakdown  map[string]int                   `json:"topic_breakdown"`
+	AverageRetries  float64                          `json:"average_retries"`
+	OldestMessage   *DLQMessage                      `json:"oldest_message"`
+}
+
+// Message テスト用のメッセージ構造体（簡略版）
+type Message struct {
+	ID    string `json:"id"`
+	Topic string `json:"topic"`
+	Data  []byte `json:"data"`
+}
+
+// ClassifyError エラー分類関数
+func ClassifyError(err error) ErrorClassification {
+	errMsg := err.Error()
+	
+	if contains(errMsg, "deadline exceeded") || contains(errMsg, "timeout") {
+		return TimeoutError
+	}
+	if contains(errMsg, "validation") || contains(errMsg, "invalid") {
+		return ValidationError
+	}
+	if contains(errMsg, "unauthorized") || contains(errMsg, "security") {
+		return SecurityError
+	}
+	if contains(errMsg, "connection") || contains(errMsg, "network") {
+		return TemporaryError
+	}
+	
+	return PermanentError
+}
+
+// SimplePublisher テスト用のシンプルパブリッシャー
+type SimplePublisher struct {
+	published []PublishedMessage
+	mu        sync.RWMutex
+}
+
+type PublishedMessage struct {
+	Topic   string   `json:"topic"`
+	Message *Message `json:"message"`
+}
+
+func NewSimplePublisher() *SimplePublisher {
+	return &SimplePublisher{
+		published: make([]PublishedMessage, 0),
+	}
+}
+
+func (p *SimplePublisher) Publish(ctx context.Context, topic string, message *Message) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.published = append(p.published, PublishedMessage{
+		Topic:   topic,
+		Message: message,
+	})
+	return nil
+}
+
+func (p *SimplePublisher) GetPublishedMessages() []PublishedMessage {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make([]PublishedMessage, len(p.published))
+	copy(result, p.published)
+	return result
+}
+
+// BatchReprocessor バッチ再処理器
+type BatchReprocessor struct {
+	dlq         *DeadLetterQueueTest
+	publisher   *SimplePublisher
+	batchSize   int
+	strategy    *ExponentialBackoffReprocessing
+}
+
+func NewBatchReprocessor(dlq *DeadLetterQueueTest, publisher *SimplePublisher, batchSize int, strategy *ExponentialBackoffReprocessing) *BatchReprocessor {
+	return &BatchReprocessor{
+		dlq:       dlq,
+		publisher: publisher,
+		batchSize: batchSize,
+		strategy:  strategy,
+	}
+}
+
+func (r *BatchReprocessor) ReprocessBatch(ctx context.Context, filter func(*DLQMessage) bool) error {
+	r.dlq.mu.RLock()
+	var toReprocess []*DLQMessage
+	for _, msg := range r.dlq.messages {
+		if filter(msg) && len(toReprocess) < r.batchSize {
+			toReprocess = append(toReprocess, msg)
+		}
+	}
+	r.dlq.mu.RUnlock()
+	
+	// 再処理
+	for _, msg := range toReprocess {
+		err := r.publisher.Publish(ctx, msg.OriginalMessage.Topic, msg.OriginalMessage)
+		if err != nil {
+			return err
+		}
+		
+		// DLQから削除
+		r.dlq.RemoveMessage(msg.OriginalMessage.ID)
+	}
+	
+	return nil
+}
+
+// DLQMonitor DLQ監視器
+type DLQMonitor struct {
+	dlq      *DeadLetterQueueTest
+	alerting *SimpleAlertingService
+	config   MonitorConfig
+}
+
+type MonitorConfig struct {
+	MaxMessages     int
+	MaxMessageAge   time.Duration
+	MaxSecurityErrs int
+	CheckInterval   time.Duration
+}
+
+func NewDLQMonitor(dlq *DeadLetterQueueTest, alerting *SimpleAlertingService, config MonitorConfig) *DLQMonitor {
+	return &DLQMonitor{
+		dlq:      dlq,
+		alerting: alerting,
+		config:   config,
+	}
+}
+
+func (m *DLQMonitor) StartMonitoring(ctx context.Context) {
+	ticker := time.NewTicker(m.config.CheckInterval)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			analytics := m.dlq.GetAnalytics()
+			
+			// 高ボリュームアラート
+			if analytics.TotalMessages > m.config.MaxMessages {
+				m.alerting.SendCriticalAlert("HIGH_VOLUME", fmt.Sprintf("DLQ has %d messages", analytics.TotalMessages))
+			}
+			
+			// 古いメッセージアラート
+			if analytics.OldestMessage != nil {
+				age := time.Since(analytics.OldestMessage.FirstFailure)
+				if age > m.config.MaxMessageAge {
+					m.alerting.SendWarningAlert("OLD_MESSAGES", fmt.Sprintf("Oldest message is %v old", age))
+				}
+			}
+			
+			// セキュリティエラーアラート
+			if securityCount := analytics.ErrorBreakdown[SecurityError]; securityCount > m.config.MaxSecurityErrs {
+				m.alerting.SendSecurityAlert("SECURITY", fmt.Sprintf("Too many security errors: %d", securityCount))
+			}
+			
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// SimpleAlertingService テスト用のシンプルアラートサービス
+type SimpleAlertingService struct {
+	alerts []Alert
+	mu     sync.RWMutex
+}
+
+type Alert struct {
+	Type      string    `json:"type"`
+	Level     string    `json:"level"`
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+func NewSimpleAlertingService() *SimpleAlertingService {
+	return &SimpleAlertingService{
+		alerts: make([]Alert, 0),
+	}
+}
+
+func (s *SimpleAlertingService) SendWarningAlert(alertType, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alerts = append(s.alerts, Alert{
+		Type:      alertType,
+		Level:     "warning",
+		Message:   message,
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+func (s *SimpleAlertingService) SendCriticalAlert(alertType, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alerts = append(s.alerts, Alert{
+		Type:      alertType,
+		Level:     "critical",
+		Message:   message,
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+func (s *SimpleAlertingService) SendSecurityAlert(alertType, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.alerts = append(s.alerts, Alert{
+		Type:      alertType,
+		Level:     "security",
+		Message:   message,
+		Timestamp: time.Now(),
+	})
+	return nil
+}
+
+func (s *SimpleAlertingService) GetAlerts() []Alert {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Alert, len(s.alerts))
+	copy(result, s.alerts)
+	return result
 }
 
 func main() {
