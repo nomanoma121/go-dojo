@@ -7,7 +7,6 @@ import (
 	"log"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"

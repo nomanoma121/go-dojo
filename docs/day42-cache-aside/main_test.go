@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/lib/pq"
+	_ "github.com/lib/pq"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
 	"github.com/stretchr/testify/assert"
@@ -33,7 +33,7 @@ type TestCacheClient struct {
 }
 
 func (t *TestCacheClient) GetJSON(ctx context.Context, key string, dest interface{}) error {
-	result, err := t.client.Get(ctx, key).Result()
+	_, err := t.client.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return ErrCacheMiss
 	} else if err != nil {
@@ -251,7 +251,7 @@ func TestUserService_CacheAside(t *testing.T) {
 	assert.Equal(t, int64(1), mockRepo.GetQueryCount())
 	
 	// メトリクスを確認
-	metrics := service.GetMetrics()
+	_ = service.GetMetrics()
 	hitRate := service.GetHitRate()
 	t.Logf("Cache hit rate: %.2f%%", hitRate)
 	assert.True(t, hitRate >= 50.0) // 50%以上のヒット率

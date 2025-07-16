@@ -29,7 +29,7 @@ type TestCacheClient struct {
 }
 
 func (t *TestCacheClient) GetJSON(ctx context.Context, key string, dest interface{}) error {
-	result, err := t.client.Get(ctx, key).Result()
+	_, err := t.client.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return ErrCacheMiss
 	}

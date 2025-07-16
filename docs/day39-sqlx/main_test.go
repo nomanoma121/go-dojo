@@ -251,7 +251,7 @@ func TestUserRepository_GetByIDs(t *testing.T) {
 	}
 
 	// Seed test data
-	users, err := helper.SeedUsers(5)
+	_, err := helper.SeedUsers(5)
 	if err != nil {
 		t.Fatalf("Failed to seed users: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestUserRepository_GetByIDs(t *testing.T) {
 	userRepo := NewUserRepository(testDB)
 
 	// Test getting multiple users
-	ids := []int{users[0].ID, users[2].ID, users[4].ID}
+	ids := []int{1, 3, 5}
 	retrievedUsers, err := userRepo.GetByIDs(ids)
 	if err != nil {
 		t.Errorf("Failed to get users by IDs: %v", err)
@@ -508,7 +508,7 @@ func TestQueryBuilder_Dynamic(t *testing.T) {
 	}
 
 	// Seed test data
-	users, err := helper.SeedUsers(5)
+	_, err := helper.SeedUsers(5)
 	if err != nil {
 		t.Fatalf("Failed to seed users: %v", err)
 	}

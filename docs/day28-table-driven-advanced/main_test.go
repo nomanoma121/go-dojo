@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1017,14 +1016,7 @@ func testUpdateMultipleUsersParallel(t *testing.T) {
 	}
 }
 
-// Helper functions
-func intPtr(i int) *int {
-	return &i
-}
-
-func stringPtr(s string) *string {
-	return &s
-}
+// Helper functions (using functions from main_solution.go)
 
 // Custom assertions for complex data
 func assertUsersEqual(t *testing.T, expected, actual []*User) {
