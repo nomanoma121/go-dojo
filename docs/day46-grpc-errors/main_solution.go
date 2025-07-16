@@ -15,6 +15,13 @@ import (
 	"time"
 )
 
+// Empty represents an empty message
+type Empty struct{}
+
+func (e *Empty) String() string {
+	return "{}"
+}
+
 // gRPCステータスコードの定義（簡単化版）
 type Code int32
 
@@ -303,10 +310,10 @@ func (s *UserServiceServer) UpdateUser(ctx context.Context, req *UpdateUserReque
 }
 
 // DeleteUser ユーザーを削除します
-func (s *UserServiceServer) DeleteUser(ctx context.Context, req *DeleteUserRequest) error {
+func (s *UserServiceServer) DeleteUser(ctx context.Context, req *DeleteUserRequest) (*Empty, error) {
 	// 入力検証
 	if req.UserID == "" {
-		return Error(InvalidArgument, "user_id is required")
+		return nil, Error(InvalidArgument, "user_id is required")
 	}
 
 	s.mu.Lock()
@@ -314,12 +321,12 @@ func (s *UserServiceServer) DeleteUser(ctx context.Context, req *DeleteUserReque
 
 	// 存在確認
 	if _, exists := s.users[req.UserID]; !exists {
-		return Error(NotFound, "user not found")
+		return nil, Error(NotFound, "user not found")
 	}
 
 	// ユーザー削除
 	delete(s.users, req.UserID)
-	return nil
+	return &Empty{}, nil
 }
 
 // ListUsers ユーザー一覧を取得します
@@ -432,12 +439,21 @@ func generateRequestID() string {
 	return hex.EncodeToString(bytes)
 }
 
-// UserClient クライアント実装
-type UserClient struct {
-	server *UserServiceServer
+// UserServiceInterface defines the interface for user service operations
+type UserServiceInterface interface {
+	GetUser(ctx context.Context, req *GetUserRequest) (*User, error)
+	CreateUser(ctx context.Context, req *CreateUserRequest) (*User, error)
+	UpdateUser(ctx context.Context, req *UpdateUserRequest) (*User, error)
+	DeleteUser(ctx context.Context, req *DeleteUserRequest) (*Empty, error)
+	ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error)
 }
 
-func NewUserClient(server *UserServiceServer) *UserClient {
+// UserClient クライアント実装
+type UserClient struct {
+	server UserServiceInterface
+}
+
+func NewUserClient(server UserServiceInterface) *UserClient {
 	return &UserClient{server: server}
 }
 
@@ -466,16 +482,17 @@ func (c *UserClient) GetUserWithRetry(ctx context.Context, userID string, config
 	var lastErr error
 
 	for attempt := 0; attempt < config.MaxAttempts; attempt++ {
-		user, err := c.GetUser(ctx, userID)
+		req := &GetUserRequest{UserID: userID}
+		user, err := c.server.GetUser(ctx, req)
 		if err == nil {
 			return user, nil
 		}
 
 		lastErr = err
 
-		// リトライ可能なエラーかチェック
-		if !c.isRetryableError(err) {
-			return nil, err
+		// リトライ可能なエラーかチェック（handleError前の生エラーを使用）
+		if !c.isRetryableErrorWithConfig(err, config) {
+			return nil, c.handleError(err)
 		}
 
 		// 最後の試行でなければ待機
@@ -485,7 +502,7 @@ func (c *UserClient) GetUserWithRetry(ctx context.Context, userID string, config
 		}
 	}
 
-	return nil, fmt.Errorf("max retry attempts reached: %w", lastErr)
+	return nil, fmt.Errorf("max retry attempts reached: %w", c.handleError(lastErr))
 }
 
 // handleError gRPCエラーを適切に処理し、分類します
@@ -541,6 +558,16 @@ func (c *UserClient) isRetryableError(err error) bool {
 	default:
 		return false
 	}
+}
+
+// isRetryableErrorWithConfig configに基づいてリトライ可能かチェック
+func (c *UserClient) isRetryableErrorWithConfig(err error, config RetryConfig) bool {
+	st, ok := FromError(err)
+	if !ok {
+		return false
+	}
+
+	return config.RetryableCodes[st.Code()]
 }
 
 // calculateBackoff 指数バックオフを計算します

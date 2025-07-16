@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 )
 
 // テスト用のモック実装
@@ -82,7 +81,7 @@ func TestRequestIDPropagator(t *testing.T) {
 	existingID := "existing-req-123"
 	md.Set(RequestIDKey, existingID)
 	
-	newCtx2, newMD2, err := propagator.Propagate(ctx, md)
+	_, newMD2, err := propagator.Propagate(ctx, md)
 	if err != nil {
 		t.Errorf("Propagate with existing ID failed: %v", err)
 	}
@@ -100,7 +99,7 @@ func TestTracePropagator(t *testing.T) {
 	md := make(MockMetadata)
 	
 	// 新しいトレースの場合
-	newCtx, newMD, err := propagator.Propagate(ctx, md)
+	_, newMD, err := propagator.Propagate(ctx, md)
 	if err != nil {
 		t.Errorf("Propagate failed: %v", err)
 	}
@@ -124,7 +123,7 @@ func TestTracePropagator(t *testing.T) {
 	md2.Set(TraceIDKey, existingTraceID)
 	md2.Set(SpanIDKey, existingSpanID)
 	
-	newCtx2, newMD2, err := propagator.Propagate(ctx, md2)
+	_, newMD2, err := propagator.Propagate(ctx, md2)
 	if err != nil {
 		t.Errorf("Propagate with existing trace failed: %v", err)
 	}

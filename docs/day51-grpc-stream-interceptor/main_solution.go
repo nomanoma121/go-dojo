@@ -214,7 +214,7 @@ func (srl *StreamRateLimiter) EndStream(method string) {
 // StreamLoggingInterceptor ストリームログインターセプタ
 func StreamLoggingInterceptor() StreamServerInterceptor {
 	return func(srv interface{}, ss ServerStream, info *StreamServerInfo, handler StreamHandler) error {
-		start := time.Now()
+		_ = time.Now()
 		
 		log.Printf("[STREAM START] Method: %s, Type: client=%t server=%t", 
 			info.FullMethod, info.IsClientStream, info.IsServerStream)

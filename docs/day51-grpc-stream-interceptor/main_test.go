@@ -72,22 +72,7 @@ func (m *MockServerStream) GetSentMessages() []interface{} {
 // テスト用のストリーミングサービス
 type TestStreamingService struct{}
 
-type StreamMessage struct {
-	ID      string `json:"id"`
-	Content string `json:"content"`
-	Timestamp int64 `json:"timestamp"`
-}
-
-type StreamRequest struct {
-	Filter string `json:"filter"`
-	Limit  int32  `json:"limit"`
-}
-
-type StreamResponse struct {
-	Count   int32  `json:"count"`
-	Status  string `json:"status"`
-	Summary string `json:"summary"`
-}
+// Using types from main_solution.go
 
 func (s *TestStreamingService) ServerSideStream(req *StreamRequest, stream ServerStream) error {
 	for i := 0; i < 5; i++ {

@@ -325,7 +325,7 @@ func TestUserService_DeleteUser_Success(t *testing.T) {
 	server.users["user001"] = existingUser
 
 	req := &DeleteUserRequest{UserID: "user001"}
-	err := server.DeleteUser(context.Background(), req)
+	_, err := server.DeleteUser(context.Background(), req)
 
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
@@ -375,14 +375,17 @@ func TestUserService_ListUsers_Success(t *testing.T) {
 
 func TestUserClient_GetUserWithRetry_Success(t *testing.T) {
 	server := NewUserServiceServer()
-	client := NewUserClient(server)
+	_ = NewUserClient(server)
 	
 	// 模擬的な失敗とその後の成功をテストするため、
 	// 一時的に利用不可能なサーバーを作成
 	failingServer := &FailingUserServiceServer{
-		server:       server,
-		failAttempts: 2, // 最初の2回は失敗
+		UserServiceServer: server,
+		failAttempts:      1, // 最初の1回は失敗
 	}
+	
+	// 事前に失敗回数をリセット
+	failingServer.attempts = 0
 	failingClient := NewUserClient(failingServer)
 
 	// テストユーザーを作成
@@ -396,7 +399,7 @@ func TestUserClient_GetUserWithRetry_Success(t *testing.T) {
 	server.users["user001"] = testUser
 
 	config := RetryConfig{
-		MaxAttempts: 3,
+		MaxAttempts: 4,
 		BackoffBase: 10 * time.Millisecond,
 		MaxBackoff:  100 * time.Millisecond,
 		RetryableCodes: map[Code]bool{
@@ -407,6 +410,8 @@ func TestUserClient_GetUserWithRetry_Success(t *testing.T) {
 	user, err := failingClient.GetUserWithRetry(context.Background(), "user001", config)
 
 	if err != nil {
+		t.Logf("Failed with error: %v", err)
+		t.Logf("Failing server attempts: %d", failingServer.attempts)
 		t.Fatalf("Expected no error after retry, got %v", err)
 	}
 

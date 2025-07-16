@@ -202,7 +202,7 @@ func TestRateLimitInterceptor_ExceededLimit(t *testing.T) {
 func TestRecoveryInterceptor(t *testing.T) {
 	service := NewUserService()
 	interceptor := RecoveryInterceptor()
-	server := NewInterceptorServer(service, interceptor)
+	_ = NewInterceptorServer(service, interceptor)
 
 	// パニックを発生させるハンドラをモック
 	panicHandler := func(ctx context.Context, req interface{}) (interface{}, error) {
