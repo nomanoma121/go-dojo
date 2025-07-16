@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -338,7 +337,7 @@ func (pm *PoolMonitor) collectStats() {
 		WaitCount:       dbStats.WaitCount,
 		WaitDuration:    dbStats.WaitDuration,
 		MaxOpenConns:    dbStats.MaxOpenConnections,
-		MaxIdleConns:    dbStats.MaxIdleClosed,
+		MaxIdleConns:    int(dbStats.MaxIdleClosed),
 	}
 	
 	pm.mu.Lock()

@@ -190,15 +190,15 @@ func (dl *DataLoader[K, V]) executeImmediately(ctx context.Context) {
 		}
 
 		for i, key := range keys {
-			var result *result[V]
+			var res *result[V]
 			if i < len(values) && i < len(errors) {
-				result = &result[V]{
+				res = &result[V]{
 					value: values[i],
 					err:   errors[i],
 				}
 			} else {
 				var zero V
-				result = &result[V]{
+				res = &result[V]{
 					value: zero,
 					err:   fmt.Errorf("missing result for key"),
 				}
@@ -206,12 +206,12 @@ func (dl *DataLoader[K, V]) executeImmediately(ctx context.Context) {
 
 			// Cache the result
 			dl.mu.Lock()
-			dl.cache[key] = result
+			dl.cache[key] = res
 			dl.mu.Unlock()
 
 			// Send to all waiting channels
 			for _, ch := range waiting[key] {
-				ch <- result
+				ch <- res
 				close(ch)
 			}
 		}
