@@ -136,7 +136,11 @@ func (wp *WorkerPool) processTask(task Task, workerID int) Result {
 	switch data := task.Data.(type) {
 	case string:
 		// String processing
-		time.Sleep(50 * time.Millisecond) // Simulate work
+		if data == "slow task" {
+			time.Sleep(100 * time.Millisecond) // Simulate slow work
+		} else {
+			time.Sleep(50 * time.Millisecond) // Simulate work
+		}
 		output = "processed: " + data
 	case int:
 		// Number processing
@@ -182,7 +186,7 @@ func (wp *WorkerPool) GetResult() (Result, bool) {
 	select {
 	case result, ok := <-wp.resultChan:
 		return result, ok
-	default:
+	case <-time.After(1 * time.Second):
 		return Result{}, false
 	}
 }

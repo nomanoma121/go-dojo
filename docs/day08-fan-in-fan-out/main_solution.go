@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -32,6 +33,34 @@ func NewPipeline(workers int, bufferSize int) *Pipeline {
 		ctx:     ctx,
 		cancel:  cancel,
 	}
+}
+
+// Submit submits a data item to the pipeline
+func (p *Pipeline) Submit(item DataItem) error {
+	select {
+	case p.input <- item:
+		return nil
+	case <-p.ctx.Done():
+		return fmt.Errorf("pipeline is stopped")
+	}
+}
+
+// GetOutput gets an output item from the pipeline
+func (p *Pipeline) GetOutput() (DataItem, bool) {
+	select {
+	case item, ok := <-p.output:
+		return item, ok
+	case <-p.ctx.Done():
+		return DataItem{}, false
+	}
+}
+
+// Stop stops the pipeline
+func (p *Pipeline) Stop() {
+	p.cancel()
+	close(p.input)
+	p.wg.Wait()
+	close(p.output)
 }
 
 // MultiStagePipeline represents a multi-stage pipeline
@@ -192,10 +221,19 @@ func FanIn(ctx context.Context, inputs ...<-chan DataItem) <-chan DataItem {
 }
 
 // NewMultiStagePipeline creates a multi-stage pipeline
-func NewMultiStagePipeline() *MultiStagePipeline {
+func NewMultiStagePipeline(transforms ...func(DataItem) DataItem) *MultiStagePipeline {
 	ctx, cancel := context.WithCancel(context.Background())
+	
+	stages := make([]Stage, len(transforms))
+	for i, transform := range transforms {
+		stages[i] = Stage{
+			Name:      fmt.Sprintf("Stage-%d", i),
+			Transform: transform,
+		}
+	}
+	
 	return &MultiStagePipeline{
-		stages: make([]Stage, 0),
+		stages: stages,
 		input:  make(chan DataItem),
 		output: make(chan DataItem),
 		ctx:    ctx,
@@ -233,13 +271,18 @@ func (msp *MultiStagePipeline) Start() {
 				processed := stageFunc(item)
 				out <- processed
 			}
-		}(stage, channels[i], channels[i+1])
+		}(stage.Transform, channels[i], channels[i+1])
 	}
 }
 
 // Submit submits data to the multi-stage pipeline
-func (msp *MultiStagePipeline) Submit(item DataItem) {
-	msp.input <- item
+func (msp *MultiStagePipeline) Submit(item DataItem) error {
+	select {
+	case msp.input <- item:
+		return nil
+	case <-msp.ctx.Done():
+		return fmt.Errorf("multi-stage pipeline is stopped")
+	}
 }
 
 // GetOutput gets processed data from the pipeline

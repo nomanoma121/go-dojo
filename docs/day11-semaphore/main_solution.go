@@ -10,6 +10,8 @@ import (
 type Semaphore struct {
 	permits chan struct{}
 	mu      sync.Mutex
+	capacity int
+	count   int
 }
 
 // NewSemaphore creates a new semaphore with the specified number of permits
@@ -19,7 +21,9 @@ func NewSemaphore(permits int) *Semaphore {
 	}
 	
 	sem := &Semaphore{
-		permits: make(chan struct{}, permits),
+		permits: make(chan struct{}, 1000), // Large buffer to prevent blocking
+		capacity: permits,
+		count:   permits,
 	}
 	
 	// Fill the semaphore with permits
@@ -33,12 +37,18 @@ func NewSemaphore(permits int) *Semaphore {
 // Acquire acquires a permit from the semaphore
 func (s *Semaphore) Acquire() {
 	<-s.permits
+	s.mu.Lock()
+	s.count--
+	s.mu.Unlock()
 }
 
 // TryAcquire tries to acquire a permit without blocking
 func (s *Semaphore) TryAcquire() bool {
 	select {
 	case <-s.permits:
+		s.mu.Lock()
+		s.count--
+		s.mu.Unlock()
 		return true
 	default:
 		return false
@@ -49,6 +59,9 @@ func (s *Semaphore) TryAcquire() bool {
 func (s *Semaphore) AcquireWithTimeout(timeout time.Duration) bool {
 	select {
 	case <-s.permits:
+		s.mu.Lock()
+		s.count--
+		s.mu.Unlock()
 		return true
 	case <-time.After(timeout):
 		return false
@@ -59,6 +72,9 @@ func (s *Semaphore) AcquireWithTimeout(timeout time.Duration) bool {
 func (s *Semaphore) AcquireWithContext(ctx context.Context) error {
 	select {
 	case <-s.permits:
+		s.mu.Lock()
+		s.count--
+		s.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -67,6 +83,10 @@ func (s *Semaphore) AcquireWithContext(ctx context.Context) error {
 
 // Release releases a permit back to the semaphore
 func (s *Semaphore) Release() {
+	s.mu.Lock()
+	s.count++
+	s.mu.Unlock()
+	
 	select {
 	case s.permits <- struct{}{}:
 		// Successfully released
@@ -80,7 +100,9 @@ func (s *Semaphore) Release() {
 
 // AvailablePermits returns the number of available permits
 func (s *Semaphore) AvailablePermits() int {
-	return len(s.permits)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.count
 }
 
 // TryAcquireN tries to acquire n permits at once

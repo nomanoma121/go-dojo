@@ -83,10 +83,16 @@ func TestErrorPipeline(t *testing.T) {
 		
 		done := make(chan bool)
 		go func() {
-			for err := range pipeline.GetErrors() {
-				errors = append(errors, err)
+			for {
+				pipelineErrors := pipeline.GetErrors()
+				if len(pipelineErrors) > 0 {
+					errors = append(errors, pipelineErrors...)
+				}
+				if len(errors) > 0 {
+					done <- true
+					return
+				}
 			}
-			done <- true
 		}()
 		
 		// Drain output

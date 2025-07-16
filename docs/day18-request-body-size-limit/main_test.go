@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -191,12 +191,8 @@ func TestConditionalMiddleware_DynamicUpdate(t *testing.T) {
 }
 
 func TestABTestMiddleware(t *testing.T) {
-	variantCalled := false
-	controlCalled := false
-	
 	variantMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			variantCalled = true
 			w.Header().Set("X-Variant", "B")
 			next.ServeHTTP(w, r)
 		})
@@ -204,7 +200,6 @@ func TestABTestMiddleware(t *testing.T) {
 	
 	controlMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			controlCalled = true
 			w.Header().Set("X-Variant", "A")
 			next.ServeHTTP(w, r)
 		})

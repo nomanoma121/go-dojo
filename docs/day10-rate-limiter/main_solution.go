@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+// RateLimiter implements token bucket rate limiting
+type RateLimiter struct {
+	rate       int
+	capacity   int
+	tokens     int
+	ticker     *time.Ticker
+	mu         sync.Mutex
+	stopCh     chan struct{}
+}
+
 // NewRateLimiter creates a new rate limiter
 func NewRateLimiter(rate int, capacity int) *RateLimiter {
 	if rate <= 0 || capacity < 0 {
@@ -65,7 +75,7 @@ func (rl *RateLimiter) Wait() {
 			return
 		}
 		// Wait for next token (approximately)
-		time.Sleep(time.Second / time.Duration(rl.rate))
+		time.Sleep(time.Second / time.Duration(rl.rate) / 2)
 	}
 }
 
@@ -79,7 +89,7 @@ func (rl *RateLimiter) WaitWithContext(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Second / time.Duration(rl.rate)):
+		case <-time.After(time.Second / time.Duration(rl.rate) / 2):
 			// Continue waiting
 		}
 	}

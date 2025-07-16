@@ -7,6 +7,60 @@ import (
 	"time"
 )
 
+// DataItem represents a piece of data flowing through the pipeline
+type DataItem struct {
+	ID       int
+	Data     interface{}
+	Metadata map[string]string
+}
+
+// PipelineError represents an error that occurred in the pipeline
+type PipelineError struct {
+	Stage     string
+	Error     error
+	Data      DataItem
+	Timestamp time.Time
+	Retryable bool
+}
+
+// PipelineStage represents a single stage in the pipeline
+type PipelineStage func(context.Context, <-chan DataItem) <-chan DataItem
+
+// ErrorPipeline represents a pipeline with error handling
+type ErrorPipeline struct {
+	stages    []PipelineStage
+	errorChan chan PipelineError
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+}
+
+// ErrorCollector collects and manages pipeline errors
+type ErrorCollector struct {
+	errors    []PipelineError
+	maxErrors int
+	mu        sync.RWMutex
+}
+
+// NewErrorCollector creates a new error collector
+func NewErrorCollector(maxErrors int) *ErrorCollector {
+	return &ErrorCollector{
+		errors:    make([]PipelineError, 0),
+		maxErrors: maxErrors,
+	}
+}
+
+// NewErrorPipeline creates a new error-handling pipeline
+func NewErrorPipeline() *ErrorPipeline {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &ErrorPipeline{
+		stages:    make([]PipelineStage, 0),
+		errorChan: make(chan PipelineError, 100),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+}
+
 // AddStage adds a processing stage to the pipeline
 func (ep *ErrorPipeline) AddStage(stage PipelineStage) {
 	// Wrap the stage with error handling
@@ -46,6 +100,22 @@ func (ep *ErrorPipeline) Stop() {
 	ep.cancel()
 	ep.wg.Wait()
 	close(ep.errorChan)
+}
+
+// GetErrors returns all errors from the error channel
+func (ep *ErrorPipeline) GetErrors() []PipelineError {
+	errors := make([]PipelineError, 0)
+	for {
+		select {
+		case err, ok := <-ep.errorChan:
+			if !ok {
+				return errors
+			}
+			errors = append(errors, err)
+		default:
+			return errors
+		}
+	}
 }
 
 // wrapStageWithErrorHandling wraps a stage with error handling

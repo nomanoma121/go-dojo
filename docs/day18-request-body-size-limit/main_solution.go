@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/fnv"
+	"hash/fnv"
 	"fmt"
 	"net/http"
 	"regexp"

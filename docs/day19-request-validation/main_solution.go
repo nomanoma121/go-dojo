@@ -63,13 +63,69 @@ func NewRequestValidator() *RequestValidator {
 	translator := NewSimpleTranslator("en")
 	setupDefaultTranslations(translator)
 	
-	return &RequestValidator{
+	rv := &RequestValidator{
 		customValidators: make(map[string]ValidatorFunc),
 		businessRules:    make([]BusinessRule, 0),
 		securityRules:    make([]SecurityRule, 0),
 		translator:       translator,
 		cache:           NewValidationCache(5 * time.Minute),
 		metrics:         NewValidationMetrics(),
+	}
+	
+	// デフォルトバリデーターを設定
+	rv.setupDefaultValidators()
+	
+	return rv
+}
+
+// setupDefaultValidators はデフォルトバリデーターを設定
+func (rv *RequestValidator) setupDefaultValidators() {
+	rv.customValidators["url"] = func(value interface{}) bool {
+		str, ok := value.(string)
+		if !ok {
+			return false
+		}
+		if str == "" {
+			return true // empty is valid for omitempty
+		}
+		// Simple URL validation
+		return strings.HasPrefix(str, "http://") || strings.HasPrefix(str, "https://")
+	}
+	
+	rv.customValidators["phone"] = func(value interface{}) bool {
+		str, ok := value.(string)
+		if !ok {
+			return false
+		}
+		if str == "" {
+			return true // empty is valid for omitempty
+		}
+		// Simple phone validation
+		return len(str) >= 10 && len(str) <= 15
+	}
+	
+	rv.customValidators["password_strength"] = func(value interface{}) bool {
+		str, ok := value.(string)
+		if !ok {
+			return false
+		}
+		if len(str) < 8 {
+			return false
+		}
+		// Check for at least one uppercase, one lowercase, one digit
+		hasUpper := false
+		hasLower := false
+		hasDigit := false
+		for _, char := range str {
+			if char >= 'A' && char <= 'Z' {
+				hasUpper = true
+			} else if char >= 'a' && char <= 'z' {
+				hasLower = true
+			} else if char >= '0' && char <= '9' {
+				hasDigit = true
+			}
+		}
+		return hasUpper && hasLower && hasDigit
 	}
 }
 

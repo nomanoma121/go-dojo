@@ -75,7 +75,19 @@ func (rm *RetryManager) ExecuteWithContext(ctx context.Context, fn RetryableFunc
 		}
 
 		attempts++
-		lastErr = fn()
+		
+		// 関数実行中のタイムアウトを考慮
+		errChan := make(chan error, 1)
+		go func() {
+			errChan <- fn()
+		}()
+
+		select {
+		case <-ctx.Done():
+			rm.updateStats(attempts, false, time.Since(start), ctx.Err())
+			return ctx.Err()
+		case lastErr = <-errChan:
+		}
 
 		if lastErr == nil {
 			// 成功
