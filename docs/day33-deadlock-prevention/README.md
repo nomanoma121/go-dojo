@@ -22,20 +22,40 @@
 ### デッドロックの典型例
 
 ```sql
--- トランザクション1
-BEGIN;
-UPDATE accounts SET balance = balance - 100 WHERE id = 1; -- アカウント1をロック
--- 少し待機...
-UPDATE accounts SET balance = balance + 100 WHERE id = 2; -- アカウント2のロック待ち
-COMMIT;
-
--- トランザクション2（同時実行）
-BEGIN;
-UPDATE accounts SET balance = balance - 50 WHERE id = 2;  -- アカウント2をロック
--- 少し待機...
-UPDATE accounts SET balance = balance + 50 WHERE id = 1;  -- アカウント1のロック待ち
-COMMIT;
-```
+-- 【災害シナリオ】デッドロック発生の瞬間
+-- 
+-- 時刻 t=0: 両トランザクションが同時開始
+-- ┌─────────────────────────────────┬─────────────────────────────────┐
+-- │    トランザクション 1              │    トランザクション 2              │
+-- ├─────────────────────────────────┼─────────────────────────────────┤
+-- │ BEGIN;                          │ BEGIN;                          │
+-- │                                 │                                 │
+-- │ -- 【STEP 1】account_id=1 ロック │ -- 【STEP 1】account_id=2 ロック │
+-- │ UPDATE accounts                 │ UPDATE accounts                 │
+-- │ SET balance = balance - 100     │ SET balance = balance - 50      │
+-- │ WHERE id = 1;                   │ WHERE id = 2;                   │
+-- │ ✅ 成功: account_1 排他ロック取得│ ✅ 成功: account_2 排他ロック取得│
+-- │                                 │                                 │
+-- │ -- 【STEP 2】account_id=2 待機   │ -- 【STEP 2】account_id=1 待機   │
+-- │ UPDATE accounts                 │ UPDATE accounts                 │
+-- │ SET balance = balance + 100     │ SET balance = balance + 50      │
+-- │ WHERE id = 2;                   │ WHERE id = 1;                   │
+-- │ ⏳ 待機: account_2 ロック要求    │ ⏳ 待機: account_1 ロック要求    │
+-- │    (TRX2が保持中)               │    (TRX1が保持中)               │
+-- │                                 │                                 │
+-- │ -- 【DEADLOCK】無限待機開始     │ -- 【DEADLOCK】無限待機開始     │
+-- │ ❌ TRX2がaccount_2を解放待ち    │ ❌ TRX1がaccount_1を解放待ち    │
+-- │ ❌ しかしTRX2はaccount_1待ち    │ ❌ しかしTRX1はaccount_2待ち    │
+-- └─────────────────────────────────┴─────────────────────────────────┘
+-- 
+-- 【結果】: 循環待機により両トランザクションが永続的にブロック
+-- 
+-- 【システムへの影響】：
+-- 1. アプリケーションレスポンス停止
+-- 2. 接続プールの枯渇
+-- 3. 他のトランザクションへの連鎖ブロック
+-- 4. データベースリソースの無駄な消費
+-- 5. ユーザーエクスペリエンスの悪化
 
 ### Goでのデッドロック再現と検出
 
@@ -50,63 +70,158 @@ import (
     _ "github.com/lib/pq"
 )
 
-// DeadlockScenario simulates a classic deadlock situation
+// 【デッドロック再現】確実にデッドロックを発生させるシミュレーター
 func DeadlockScenario(db *sql.DB) error {
     var wg sync.WaitGroup
     errors := make(chan error, 2)
 
-    // トランザクション1: アカウント1→2の順でロック
+    // 【トランザクション1】アカウント1→2の順でロック取得
     wg.Add(1)
     go func() {
         defer wg.Done()
+        
+        // 【戦略】先にaccount_id=1をロック、後でaccount_id=2をロック
+        log.Printf("Transaction 1: Starting transfer 1->2")
         err := transferMoney(db, 1, 2, 100)
+        if err != nil {
+            log.Printf("Transaction 1: Failed with error: %v", err)
+        } else {
+            log.Printf("Transaction 1: Completed successfully")
+        }
         errors <- err
     }()
 
-    // トランザクション2: アカウント2→1の順でロック
+    // 【トランザクション2】アカウント2→1の順でロック取得（逆順）
     wg.Add(1)
     go func() {
         defer wg.Done()
-        time.Sleep(50 * time.Millisecond) // わずかな遅延
+        
+        // 【重要】わずかな遅延でタイミングを調整
+        // この遅延により、TRX1が先にaccount_1をロックする確率を高める
+        time.Sleep(50 * time.Millisecond)
+        
+        // 【戦略】先にaccount_id=2をロック、後でaccount_id=1をロック
+        log.Printf("Transaction 2: Starting transfer 2->1")
         err := transferMoney(db, 2, 1, 50)
+        if err != nil {
+            log.Printf("Transaction 2: Failed with error: %v", err)
+        } else {
+            log.Printf("Transaction 2: Completed successfully")
+        }
         errors <- err
     }()
 
     wg.Wait()
     close(errors)
 
-    // エラーを確認
+    // 【デッドロック検出】エラー解析
+    deadlockDetected := false
     for err := range errors {
         if err != nil && isDeadlockError(err) {
-            return fmt.Errorf("deadlock detected: %w", err)
+            deadlockDetected = true
+            log.Printf("🚨 DEADLOCK DETECTED: %v", err)
         }
     }
+    
+    if deadlockDetected {
+        return fmt.Errorf("deadlock successfully reproduced")
+    }
+    
+    log.Printf("✅ Both transactions completed without deadlock")
     return nil
 }
 
+// 【危険な実装】デッドロックを誘発する資金移動関数
 func transferMoney(db *sql.DB, fromID, toID int, amount float64) error {
     tx, err := db.Begin()
     if err != nil {
-        return err
+        return fmt.Errorf("failed to begin transaction: %w", err)
     }
     defer tx.Rollback()
 
-    // 送金元をロック
+    log.Printf("TRX: Attempting to lock account %d (debit)", fromID)
+    
+    // 【STEP 1】送金元アカウントの排他ロック取得
     _, err = tx.Exec("UPDATE accounts SET balance = balance - $1 WHERE id = $2", amount, fromID)
     if err != nil {
-        return err
+        return fmt.Errorf("failed to debit account %d: %w", fromID, err)
     }
+    
+    log.Printf("TRX: Successfully locked account %d, now waiting before locking %d", fromID, toID)
 
-    // 意図的な遅延でデッドロックを誘発
+    // 【危険ゾーン】意図的な遅延でデッドロック確率を上げる
+    // この間に他のトランザクションが次のリソースをロックする時間を与える
     time.Sleep(100 * time.Millisecond)
 
-    // 送金先をロック
+    log.Printf("TRX: Now attempting to lock account %d (credit)", toID)
+    
+    // 【STEP 2】送金先アカウントの排他ロック取得（デッドロック発生ポイント）
     _, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", amount, toID)
     if err != nil {
-        return err
+        // 【デッドロック検出】ここでデッドロックエラーが発生する
+        log.Printf("TRX: Failed to lock account %d: %v", toID, err)
+        return fmt.Errorf("failed to credit account %d: %w", toID, err)
     }
+    
+    log.Printf("TRX: Successfully completed transfer from %d to %d", fromID, toID)
 
-    return tx.Commit()
+    // 【コミット】両方のロックが取得できた場合のみ実行
+    if err := tx.Commit(); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+    
+    return nil
+}
+
+// 【エラー判定】データベース固有のデッドロックエラー検出
+func isDeadlockError(err error) bool {
+    if err == nil {
+        return false
+    }
+    
+    errStr := strings.ToLower(err.Error())
+    
+    // 【PostgreSQL】デッドロック関連エラーパターン
+    deadlockPatterns := []string{
+        "deadlock detected",        // 直接的なデッドロックメッセージ
+        "40p01",                   // PostgreSQL deadlock_detected エラーコード
+        "deadlock",                // 一般的なデッドロック用語
+        "lock wait timeout",       // MySQL/MariaDB のロック待機タイムアウト
+        "lock timeout",            // SQL Server のロックタイムアウト
+    }
+    
+    for _, pattern := range deadlockPatterns {
+        if strings.Contains(errStr, pattern) {
+            return true
+        }
+    }
+    
+    return false
+}
+
+// 【検証用】デッドロック発生条件の確認
+func validateDeadlockConditions(db *sql.DB) error {
+    // 【確認1】テーブルとデータの存在確認
+    var count int
+    err := db.QueryRow("SELECT COUNT(*) FROM accounts WHERE id IN (1, 2)").Scan(&count)
+    if err != nil {
+        return fmt.Errorf("failed to verify test accounts: %w", err)
+    }
+    
+    if count < 2 {
+        return fmt.Errorf("insufficient test accounts: found %d, need 2", count)
+    }
+    
+    // 【確認2】分離レベルの確認（READ COMMITTEDまたはREPEATABLE READ推奨）
+    var isolationLevel string
+    err = db.QueryRow("SHOW transaction_isolation").Scan(&isolationLevel)
+    if err != nil {
+        log.Printf("Warning: Could not check isolation level: %v", err)
+    } else {
+        log.Printf("Current isolation level: %s", isolationLevel)
+    }
+    
+    return nil
 }
 ```
 
@@ -115,34 +230,141 @@ func transferMoney(db *sql.DB, fromID, toID int, amount float64) error {
 リソースアクセスの順序を統一することでデッドロックを防ぐ：
 
 ```go
+// 【デッドロック予防】順序付きロックによる根本的解決
 func transferMoneyOrdered(db *sql.DB, fromID, toID int, amount float64) error {
-    // 常に小さいIDから大きいIDの順でロック
+    // 【核心アイデア】常に一定の順序でリソースにアクセス
+    // 
+    // 【理論的背景】：
+    // デッドロック発生の4条件のうち「循環待機」を破ることで、
+    // デッドロックを根本的に防止する
+    //
+    // 【実装方針】：
+    // - 全てのトランザクションで同じ順序でロックを取得
+    // - ID順序付けにより一貫性を保証
+    // - 循環待機の発生を物理的に不可能にする
+    
     firstID, secondID := fromID, toID
     firstAmount, secondAmount := -amount, amount
     
+    // 【順序統一】常に小さいIDから大きいIDの順でアクセス
     if fromID > toID {
+        // 逆方向の送金でも順序を維持
         firstID, secondID = toID, fromID
         firstAmount, secondAmount = amount, -amount
     }
 
+    log.Printf("Ordered transfer: Will lock ID %d first, then ID %d", firstID, secondID)
+
+    tx, err := db.Begin()
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %w", err)
+    }
+    defer tx.Rollback()
+
+    // 【STEP 1】最小IDのアカウントを必ず最初にロック
+    log.Printf("Locking account %d (first in order)", firstID)
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", firstAmount, firstID)
+    if err != nil {
+        return fmt.Errorf("failed to update account %d: %w", firstID, err)
+    }
+
+    // 【STEP 2】最大IDのアカウントを常に後でロック
+    log.Printf("Locking account %d (second in order)", secondID)
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", secondAmount, secondID)
+    if err != nil {
+        return fmt.Errorf("failed to update account %d: %w", secondID, err)
+    }
+
+    log.Printf("✅ Ordered lock strategy: Successfully completed transfer")
+    
+    // 【成功】循環待機が物理的に不可能なため、デッドロックなし
+    if err := tx.Commit(); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+    
+    return nil
+}
+
+// 【汎用実装】複数リソースの順序付きロック
+func lockResourcesInOrder(tx *sql.Tx, resourceIDs []int, operation func(*sql.Tx, int) error) error {
+    // 【STEP 1】リソースIDをソートして順序を統一
+    sortedIDs := make([]int, len(resourceIDs))
+    copy(sortedIDs, resourceIDs)
+    sort.Ints(sortedIDs)
+    
+    // 【STEP 2】ソート済み順序でリソースをロック
+    for _, id := range sortedIDs {
+        if err := operation(tx, id); err != nil {
+            return fmt.Errorf("failed to lock resource %d: %w", id, err)
+        }
+        log.Printf("Successfully locked resource %d", id)
+    }
+    
+    return nil
+}
+
+// 【複雑なケース】多方向送金での順序付きロック適用例
+func transferMoneyMultiple(db *sql.DB, transfers []Transfer) error {
+    // Transfer構造体: {FromID, ToID, Amount}
+    
+    // 【STEP 1】全関連アカウントIDを収集
+    accountIDs := make(map[int]bool)
+    for _, t := range transfers {
+        accountIDs[t.FromID] = true
+        accountIDs[t.ToID] = true
+    }
+    
+    // 【STEP 2】ID順序でソート
+    var sortedAccountIDs []int
+    for id := range accountIDs {
+        sortedAccountIDs = append(sortedAccountIDs, id)
+    }
+    sort.Ints(sortedAccountIDs)
+    
     tx, err := db.Begin()
     if err != nil {
         return err
     }
     defer tx.Rollback()
-
-    // 順序付きでロック
-    _, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", firstAmount, firstID)
-    if err != nil {
-        return err
+    
+    // 【STEP 3】順序付きで全アカウントをロック（FOR UPDATEクエリ）
+    for _, accountID := range sortedAccountIDs {
+        var balance float64
+        err := tx.QueryRow("SELECT balance FROM accounts WHERE id = $1 FOR UPDATE", accountID).Scan(&balance)
+        if err != nil {
+            return fmt.Errorf("failed to lock account %d: %w", accountID, err)
+        }
+        log.Printf("Locked account %d for update", accountID)
     }
-
-    _, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", secondAmount, secondID)
-    if err != nil {
-        return err
+    
+    // 【STEP 4】全ロック取得後に安全に更新実行
+    for _, transfer := range transfers {
+        _, err = tx.Exec("UPDATE accounts SET balance = balance - $1 WHERE id = $2", transfer.Amount, transfer.FromID)
+        if err != nil {
+            return err
+        }
+        
+        _, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", transfer.Amount, transfer.ToID)
+        if err != nil {
+            return err
+        }
     }
-
+    
     return tx.Commit()
+}
+
+// 【設計原則】順序付きロックの重要ポイント
+//
+// 1. 【一貫性】：全てのトランザクションで同じ順序を使用
+// 2. 【決定性】：ソート順序は決定的（通常は数値順、文字列辞書順など）
+// 3. 【完全性】：必要なリソースを事前に特定し、全て同じ方法で順序付け
+// 4. 【効率性】：不要なリソースのロックは避ける
+// 5. 【保守性】：順序ルールを明確に文書化し、チーム全体で共有
+
+type Transfer struct {
+    FromID int
+    ToID   int
+    Amount float64
 }
 ```
 

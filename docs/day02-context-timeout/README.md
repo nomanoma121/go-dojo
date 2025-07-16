@@ -13,12 +13,21 @@ Goのcontext.Contextを使用したタイムアウトとデッドライン制御
 #### 1. タイムアウトなしの問題
 
 ```go
-// 危険な例：タイムアウトなしのHTTP呼び出し
+// 【危険な例】：タイムアウトなしのHTTP呼び出し - 本番環境では絶対に避けるべき
 func dangerousAPICall(url string) (*http.Response, error) {
-    // タイムアウトが設定されていない
+    // 【致命的問題1】タイムアウトが設定されていない
+    // http.Client{}のデフォルト設定：
+    // - Timeout: 0 (無制限)
+    // - 接続タイムアウト: 無制限
+    // - レスポンス読み取りタイムアウト: 無制限
     client := &http.Client{}
     
-    // 外部サービスが応答しない場合、無限に待機
+    // 【致命的問題2】外部サービスが応答しない場合、無限に待機
+    // 以下のシナリオで永続的にブロック：
+    // - ネットワーク分断
+    // - サーバーのハング
+    // - DNS解決の失敗
+    // - TCP接続の確立タイムアウト
     resp, err := client.Get(url)
     if err != nil {
         return nil, err
@@ -27,22 +36,32 @@ func dangerousAPICall(url string) (*http.Response, error) {
     return resp, nil
 }
 
-// 問題のシナリオ
+// 【問題のシナリオ】実際のプロダクション環境で発生しうる災害的状況
 func problematicExample() {
-    // 複数のAPIを並行呼び出し
+    // 【災害シナリオ】複数のAPIを並行呼び出し
     for i := 0; i < 100; i++ {
         go func(id int) {
-            // 各Goroutineが無期限に待機する可能性
+            // 【重大リスク】各Goroutineが無期限に待機する可能性
+            // 外部APIが応答しない場合：
+            // 1. 100個のGoroutineが永続的にブロック
+            // 2. メモリ使用量が蓄積（各Goroutine = 約2-8KB）
+            // 3. ファイルディスクリプタ枯渇
+            // 4. アプリケーション全体の応答停止
             resp, err := dangerousAPICall("https://slow-api.example.com")
             if err != nil {
                 log.Printf("Request %d failed: %v", id, err)
                 return
             }
             defer resp.Body.Close()
-            // 処理...
-        }(i)
+            
+            // 【追加問題】レスポンス処理中にもブロック可能性
+            // resp.Body.Read()も無制限に待機する可能性がある
+        }(i) // 【ループ変数キャプチャ】正しい実装
     }
-    // 100個のGoroutineが同時にハングする可能性
+    
+    // 【結果】100個のGoroutineが同時にハングし、
+    // アプリケーション全体が実質的に停止状態になる
+    // サーバー再起動が唯一の復旧手段となる
 }
 ```
 
@@ -83,36 +102,96 @@ import (
     "time"
 )
 
-// タイムアウト付きHTTPクライアント
+// 【正しい実装】タイムアウト付きHTTPクライアント
+// プロダクション環境で使用すべき安全な設計パターン
 type TimeoutHTTPClient struct {
-    client  *http.Client
-    timeout time.Duration
+    client  *http.Client      // 【基盤】実際のHTTP通信を行うクライアント
+    timeout time.Duration     // 【制約】リクエスト全体のタイムアウト時間
 }
 
+// 【コンストラクタ】安全なHTTPクライアントを作成
 func NewTimeoutHTTPClient(timeout time.Duration) *TimeoutHTTPClient {
     return &TimeoutHTTPClient{
+        // 【重要】ここでもclient自体にタイムアウトを設定可能
+        // しかし、Context方式の方が柔軟性が高いため基本設定のまま使用
         client:  &http.Client{},
         timeout: timeout,
     }
 }
 
+// 【安全なGET実装】タイムアウト制御付きHTTPリクエスト
 func (thc *TimeoutHTTPClient) Get(url string) (*http.Response, error) {
-    // 指定時間でタイムアウトするContextを作成
+    // 【Step 1】指定時間でタイムアウトするContextを作成
+    // context.WithTimeout()の動作：
+    // - 指定時間後にctx.Done()チャネルがクローズされる
+    // - ctx.Err()がcontext.DeadlineExceededを返すようになる
+    // - 自動的にHTTPリクエストがキャンセルされる
     ctx, cancel := context.WithTimeout(context.Background(), thc.timeout)
-    defer cancel() // リソースリークを防ぐため必ずcancelを呼ぶ
     
-    // Contextを使ってリクエストを作成
+    // 【重要】defer cancel()でリソースリークを防ぐ
+    // この処理により以下が保証される：
+    // 1. 関数終了時に必ずcancel()が呼ばれる
+    // 2. Contextに関連する内部リソースが解放される
+    // 3. タイムアウト前に処理が完了してもリソースが残らない
+    defer cancel()
+    
+    // 【Step 2】Contextを使ってリクエストを作成
+    // http.NewRequestWithContext()により：
+    // - HTTPリクエスト自体にContextを関連付け
+    // - ネットワーク層でのタイムアウト制御が有効化
+    // - TCP接続、DNS解決、レスポンス読み取りすべてに適用
     req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
     if err != nil {
         return nil, fmt.Errorf("failed to create request: %w", err)
     }
     
-    // タイムアウト付きでリクエストを実行
+    // 【Step 3】タイムアウト付きでリクエストを実行
+    // client.Do(req)は以下の段階でタイムアウトを監視：
+    // 1. DNS解決
+    // 2. TCP接続確立
+    // 3. HTTPリクエスト送信
+    // 4. HTTPレスポンス受信
+    // 5. レスポンスボディの読み取り開始
     resp, err := thc.client.Do(req)
     if err != nil {
-        // タイムアウトエラーを特別に処理
+        // 【エラー分類】タイムアウトエラーを特別に処理
+        // Context.Err()でタイムアウトの種類を判定：
+        // - context.DeadlineExceeded: WithTimeout/WithDeadlineでのタイムアウト
+        // - context.Canceled: cancel()関数による明示的キャンセル
         if ctx.Err() == context.DeadlineExceeded {
             return nil, fmt.Errorf("request timed out after %v: %w", thc.timeout, err)
+        }
+        return nil, fmt.Errorf("request failed: %w", err)
+    }
+    
+    // 【Step 4】成功時のレスポンス返却
+    // 注意：レスポンスボディの読み取りも呼び出し側でタイムアウト考慮が必要
+    // defer resp.Body.Close()は呼び出し側の責任
+    return resp, nil
+}
+
+// 【発展機能】複数段階のタイムアウト制御
+func (thc *TimeoutHTTPClient) GetWithStages(url string, connectTimeout, responseTimeout time.Duration) (*http.Response, error) {
+    // 【全体タイムアウト】リクエスト全体の制限時間
+    totalTimeout := connectTimeout + responseTimeout
+    ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+    defer cancel()
+    
+    // 【接続段階】DNS解決+TCP接続の制限時間
+    connectCtx, connectCancel := context.WithTimeout(ctx, connectTimeout)
+    defer connectCancel()
+    
+    req, err := http.NewRequestWithContext(connectCtx, "GET", url, nil)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create request: %w", err)
+    }
+    
+    // 【レスポンス段階】HTTPレスポンス受信の制限時間
+    // 接続が完了した後、レスポンス受信に別のタイムアウトを適用
+    resp, err := thc.client.Do(req)
+    if err != nil {
+        if connectCtx.Err() == context.DeadlineExceeded {
+            return nil, fmt.Errorf("connection timed out after %v: %w", connectTimeout, err)
         }
         return nil, fmt.Errorf("request failed: %w", err)
     }

@@ -13,29 +13,51 @@ Goの並行プログラミングでは、複数のGoroutineが同じメモリ領
 #### レースコンディションの実例分析
 
 ```go
-// ❌ 危険な例：レースコンディションが発生
-var counter int
+// ❌ 【危険な例】：レースコンディションが発生 - 本番環境で絶対に避けるべき
+var counter int  // 【問題】グローバル変数への非同期アクセス
 
 func increment() {
-    counter++ // この操作は原子的ではない！
+    // 【致命的問題】counter++は原子的操作ではない！
+    // CPUレベルでは以下の3段階に分解される：
+    // 1. メモリからcounterの現在値をレジスタに読み込み
+    // 2. レジスタの値を1増加
+    // 3. レジスタの値をcounterのメモリ位置に書き戻し
+    //
+    // 複数のGoroutineが同時に実行すると、これらの段階が
+    // インターリーブされ、データ競合が発生する
+    counter++
 }
 
 func problematicExample() {
     var wg sync.WaitGroup
     
-    // 1000個のGoroutineが同時にcounterを変更
+    // 【災害シナリオ】1000個のGoroutineが同時にcounterを変更
     for i := 0; i < 1000; i++ {
         wg.Add(1)
         go func() {
             defer wg.Done()
+            
+            // 【レースコンディション発生地点】
+            // 複数のGoroutineが同時にincrement()を呼び出し、
+            // counterの読み取り-変更-書き込みサイクルが競合する
             increment()
         }()
     }
     
     wg.Wait()
     fmt.Printf("Final counter: %d\n", counter) 
+    
+    // 【予測不可能な結果】
     // 期待値: 1000
     // 実際の結果: 500-1000の間のランダムな値（毎回異なる）
+    //
+    // 【データ競合の具体例】：
+    // - Goroutine A: counter=0を読み取り → 1に増加 → 書き戻し
+    // - Goroutine B: counter=0を読み取り → 1に増加 → 書き戻し
+    // 結果: 2回のインクリメントで counter=1 (本来は2になるべき)
+    //
+    // 【検出方法】: go run -race program.go で実行すると、
+    // Go race detectorがデータ競合を検出し、警告を表示する
 }
 ```
 
@@ -96,23 +118,30 @@ func reader() {
 ```go
 import "sync"
 
+// 【正しい実装】thread-safeなカウンター
+// sync.Mutexを使用してレースコンディションを完全に防ぐ
 type SafeCounter struct {
-    mu    sync.Mutex
-    value int
+    mu    sync.Mutex  // 【排他制御】valueへのアクセスを保護
+    value int         // 【保護対象】このフィールドは必ずmu.Lock()で保護される
 }
 
-func (c *SafeCounter) Increment() {
-    c.mu.Lock()         // クリティカルセクション開始
-    defer c.mu.Unlock() // 関数終了時に自動解除
+// 【安全なインクリメント】原子的操作を保証
+func (sc *SafeCounter) Increment() {
+    sc.mu.Lock()      // 【クリティカルセクション開始】他のGoroutineをブロック
+    defer sc.mu.Unlock()  // 【重要】関数終了時に必ずUnlock（panicでも実行される）
     
-    c.value++           // 安全に値を変更
+    // この時点で、このGoroutineだけがvalueにアクセス可能
+    // レースコンディションは完全に防がれる
+    sc.value++
 }
 
-func (c *SafeCounter) Value() int {
-    c.mu.Lock()
-    defer c.mu.Unlock()
+// 【安全な読み取り】一貫した値を取得
+func (sc *SafeCounter) Value() int {
+    sc.mu.Lock()
+    defer sc.mu.Unlock()
     
-    return c.value      // 安全に値を読み取り
+    // 読み取り操作も保護が必要（メモリ可視性を保証）
+    return sc.value
 }
 ```
 

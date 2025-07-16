@@ -16,15 +16,45 @@
 システム開発では、リソースの過負荷を防ぐためにアクセス制限が必要な場面が多くあります：
 
 ```go
-// 問題のある例：制限なしのAPI呼び出し
+// ❌ 【致命的問題】制限なしのAPI呼び出し - サービス停止の原因
 func callExternalAPI() {
     for i := 0; i < 10000; i++ {
         go func(id int) {
-            // 10,000個のGoroutineが同時にAPI呼び出し
+            // 【災害シナリオ】10,000個のGoroutineが同時にAPI呼び出し
+            // 
+            // 【問題点の詳細】：
+            // 1. 瞬間的な大量リクエスト: 10,000 req/sec
+            // 2. 外部APIの制限: 通常100-1000 req/sec
+            // 3. ネットワーク帯域幅: 数Gbps の帯域消費
+            // 4. TCP接続枯渇: OSレベルでの接続数上限到達
+            //
+            // 【結果】：
+            // - 外部APIサーバーがダウン
+            // - 自社IPアドレスがブラックリスト登録
+            // - 全てのリクエストがタイムアウト
+            // - システム全体のパフォーマンス劣化
+            
             resp, err := http.Get("https://api.example.com/data")
-            // APIサーバーが過負荷で停止する可能性
+            if err != nil {
+                // 【実際のエラー例】：
+                // - "connection refused" (サーバー過負荷)
+                // - "rate limit exceeded" (API制限違反)
+                // - "too many requests" (429 HTTP status)
+                // - "timeout" (ネットワーク輻輳)
+                log.Printf("Request %d failed: %v", id, err)
+                return
+            }
+            defer resp.Body.Close()
+            
+            // 【追加リスク】レスポンス処理も並行実行され、
+            // メモリ使用量とCPU負荷が爆発的に増加
         }(i)
     }
+    
+    // 【最終的な影響】：
+    // - サービス停止: 外部API依存サービスの完全停止
+    // - ビジネス損失: 顧客離脱とレピュテーション悪化
+    // - 復旧困難: ブラックリスト解除に数時間～数日
 }
 ```
 
@@ -45,32 +75,46 @@ import (
     "context"
 )
 
-// 基本的なRate Limiterの構造
+// 【正しい実装】Token Bucket アルゴリズムによるRate Limiter
 type RateLimiter struct {
-    rate       time.Duration // トークン補充間隔
-    capacity   int           // バケットの容量
-    tokens     int           // 現在のトークン数
-    ticker     *time.Ticker  // 定期実行用
-    mu         sync.Mutex    // 排他制御
-    tokenChan  chan struct{} // トークン配布用チャネル
-    done       chan struct{} // 停止用チャネル
+    rate       time.Duration // 【補充間隔】トークン1個あたりの補充時間
+    capacity   int           // 【バケット容量】最大蓄積可能トークン数
+    tokens     int           // 【現在量】利用可能なトークン数
+    ticker     *time.Ticker  // 【定期処理】一定間隔でのトークン補充
+    mu         sync.Mutex    // 【排他制御】並行安全性の保証
+    tokenChan  chan struct{} // 【配布機構】トークンの配布チャネル
+    done       chan struct{} // 【停止制御】グレースフルシャットダウン用
 }
 
+// 【コンストラクタ】適切なパラメータ設定が重要
 func NewRateLimiter(requestsPerSecond int, burstCapacity int) *RateLimiter {
+    // 【レート計算】1秒間をリクエスト数で分割
+    // 例: 100 req/sec → 10ms間隔でトークン補充
     interval := time.Second / time.Duration(requestsPerSecond)
     
     rl := &RateLimiter{
         rate:      interval,
         capacity:  burstCapacity,
-        tokens:    burstCapacity, // 初期状態では満タン
+        tokens:    burstCapacity, // 【重要】初期状態では満タンで開始
+        
+        // 【バッファ付きチャネル】容量分のトークンを事前格納可能
         tokenChan: make(chan struct{}, burstCapacity),
         done:      make(chan struct{}),
     }
     
-    // 初期トークンを配布
+    // 【初期化】バケットを満タンの状態で開始
     for i := 0; i < burstCapacity; i++ {
         rl.tokenChan <- struct{}{}
     }
+    
+    // 【設計意図】：
+    // - requestsPerSecond: 持続可能なスループット
+    // - burstCapacity: 短期間の突発的な負荷に対応
+    //
+    // 【例】requestsPerSecond=100, burstCapacity=10:
+    // - 平常時: 100 req/sec の安定したレート
+    // - バースト時: 最大10リクエストを瞬時に処理可能
+    // - 回復時間: 10個のトークン補充に100ms必要
     
     return rl
 }

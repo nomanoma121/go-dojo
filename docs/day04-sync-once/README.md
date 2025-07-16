@@ -24,16 +24,38 @@
 これらの処理を複数回実行してしまうと、以下の問題が発生する可能性があります：
 
 ```go
-// 問題のある例：複数回初期化される可能性
-var config *Config
+// ❌ 【問題のある例】：複数回初期化される可能性 - 本番環境で避けるべき
+var config *Config  // 【問題】グローバル変数への非同期アクセス
 
 func GetConfig() *Config {
+    // 【致命的問題】レースコンディションが発生
     if config == nil {
-        // 複数のGoroutineが同時にここに到達する可能性
-        config = loadConfigFromFile() // 重い処理が複数回実行される
+        // 【危険地帯】複数のGoroutineが同時にここに到達する可能性
+        // シナリオ：
+        // - Goroutine A: config == nil を確認 → loadConfigFromFile()開始
+        // - Goroutine B: config == nil を確認 → loadConfigFromFile()開始
+        // - 結果: 同じ設定ファイルを2回読み込み
+        
+        config = loadConfigFromFile() // 【問題】重い処理が複数回実行される
+        
+        // 【追加問題】：
+        // 1. ファイルI/Oが重複実行される（パフォーマンス劣化）
+        // 2. 異なるタイミングで読み込まれた設定が混在する可能性
+        // 3. メモリリークの危険性（古いconfigオブジェクトが残存）
+        // 4. 設定の一貫性が保証されない
     }
     return config
 }
+
+// 【レースコンディションの具体例】：
+// 時刻 | Goroutine A              | Goroutine B              | config状態
+// -----|-------------------------|-------------------------|----------
+// t1   | if config == nil (true) |                        | nil
+// t2   |                        | if config == nil (true) | nil
+// t3   | loadConfig開始          |                        | nil  
+// t4   |                        | loadConfig開始          | nil
+// t5   | config = configA       |                        | configA
+// t6   |                        | config = configB       | configB (上書き!)
 ```
 
 上記のコードは**レースコンディション**を引き起こし、以下の問題が発生します：
@@ -49,18 +71,54 @@ func GetConfig() *Config {
 ```go
 import "sync"
 
+// 【正しい実装】sync.Onceによる安全な一度限りの初期化
 var (
-    config *Config
-    once   sync.Once
+    config *Config      // 【保護対象】設定データ
+    once   sync.Once    // 【制御機構】一度限りの実行を保証
 )
 
 func GetConfig() *Config {
+    // 【核心機能】once.Do()が一度限りの実行を保証
     once.Do(func() {
-        // この関数は一度だけ実行される
+        // 【重要】この関数は以下を保証する：
+        // 1. プログラム実行中に一度だけ呼ばれる
+        // 2. 複数のGoroutineが同時に呼び出しても安全
+        // 3. 最初のGoroutineが実行中、他は完了まで待機
+        // 4. 実行完了後、他のGoroutineは即座にreturn
+        
         config = loadConfigFromFile()
         fmt.Println("Configuration loaded!")
+        
+        // 【内部動作の詳細】：
+        // sync.Onceは内部で以下の仕組みを使用：
+        // - atomic操作による高速な「実行済みチェック」
+        // - Mutexによる排他制御（初回実行時のみ）
+        // - Memory Barrierによる可視性保証
     })
+    
+    // 【パフォーマンス特性】：
+    // - 初回呼び出し: Mutex + 関数実行 + 状態更新
+    // - 2回目以降: atomic load のみ（非常に高速）
     return config
+}
+
+// 【使用例】複数Goroutineからの安全な呼び出し
+func demonstrateSafeUsage() {
+    var wg sync.WaitGroup
+    
+    // 100個のGoroutineが同時にGetConfig()を呼び出し
+    for i := 0; i < 100; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            
+            cfg := GetConfig()  // 【安全】どのGoroutineも同じ設定を取得
+            fmt.Printf("Goroutine %d got config: %v\n", id, cfg != nil)
+        }(i)
+    }
+    
+    wg.Wait()
+    // 結果: "Configuration loaded!" は一度だけ出力される
 }
 ```
 

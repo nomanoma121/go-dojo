@@ -13,23 +13,39 @@
 **トランザクションなしの問題例：**
 
 ```go
-// ❌ トランザクションなしの危険な実装
+// ❌ 【致命的問題】トランザクションなしの危険な実装 - 本番環境で絶対に避けるべき
 func transferMoneyUnsafe(db *sql.DB, fromAccountID, toAccountID int, amount decimal.Decimal) error {
-    // 1. 送金元から引出
+    // 【STEP 1】送金元から引出（第一のDB操作）
     _, err := db.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, fromAccountID)
     if err != nil {
         return err
     }
     
-    // ここでシステム障害が発生すると...
-    // 送金元からお金が消え、送金先には届かない！
+    // ⚠️ 【致命的な危険ゾーン】⚠️
+    // この時点で以下の災害シナリオが考えられる：
+    //
+    // 1. ネットワーク障害：次のクエリが到達しない
+    // 2. アプリケーションクラッシュ：プロセス終了
+    // 3. データベース障害：DB接続切断
+    // 4. システム再起動：サーバー障害
+    // 5. メモリ不足：OOM Killer発動
+    //
+    // 【結果】送金元からお金が消失、送金先には未着金
+    // → 金融システムでは致命的な不整合
     
-    // 2. 送金先に入金
+    // 【STEP 2】送金先に入金（第二のDB操作）
     _, err = db.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, toAccountID)
     if err != nil {
-        // ロールバックできない！データ不整合が発生
+        // 【重大問題】このエラー時、STEP 1の操作をロールバックできない！
+        // 既に送金元の残高は減っているが、送金先は増えていない
+        // → データベースの整合性が完全に破綻
         return err
     }
+    
+    // 【隠れた問題】成功時でも以下のリスクが残存：
+    // - 並行実行時の競合状態
+    // - 中間状態での読み取り一貫性問題
+    // - 監査ログとの不整合
     
     return nil
 }
@@ -38,36 +54,72 @@ func transferMoneyUnsafe(db *sql.DB, fromAccountID, toAccountID int, amount deci
 **トランザクションによる改善：**
 
 ```go
-// ✅ トランザクションによる安全な実装
+// ✅ 【正しい実装】トランザクションによる安全な実装 - プロダクション対応
 func transferMoneySafe(db *sql.DB, fromAccountID, toAccountID int, amount decimal.Decimal) error {
+    // 【STEP 1】トランザクション開始
     tx, err := db.Begin()
     if err != nil {
-        return err
+        return fmt.Errorf("failed to begin transaction: %w", err)
     }
+    
+    // 【重要】defer文による確実なクリーンアップ
     defer func() {
         if p := recover(); p != nil {
+            // 【パニック対応】予期しないエラーでもロールバック
             tx.Rollback()
-            panic(p) // re-throw panic after Rollback
+            panic(p) // パニックを再発生（ログ記録後）
         } else if err != nil {
-            tx.Rollback() // エラー時は自動ロールバック
+            // 【エラー時】自動ロールバック実行
+            if rollbackErr := tx.Rollback(); rollbackErr != nil {
+                log.Printf("Rollback failed: %v", rollbackErr)
+            }
         } else {
-            err = tx.Commit() // 成功時はコミット
+            // 【成功時】コミット実行
+            err = tx.Commit()
+            if err != nil {
+                log.Printf("Commit failed: %v", err)
+            }
         }
     }()
     
-    // 1. 送金元から引出
-    _, err = tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, fromAccountID)
+    // 【STEP 2】原子的操作群の開始
+    // 送金元から引出（減算操作）
+    result, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ? AND balance >= ?", 
+                           amount, fromAccountID, amount)
     if err != nil {
-        return err
+        return fmt.Errorf("failed to debit from account %d: %w", fromAccountID, err)
     }
     
-    // 2. 送金先に入金
-    _, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, toAccountID)
+    // 【残高チェック】影響行数で残高不足を検出
+    rowsAffected, err := result.RowsAffected()
     if err != nil {
-        return err
+        return fmt.Errorf("failed to check debit result: %w", err)
+    }
+    if rowsAffected == 0 {
+        return fmt.Errorf("insufficient balance in account %d", fromAccountID)
     }
     
-    // 両方成功時のみコミット
+    // 【STEP 3】送金先に入金（加算操作）
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", 
+                     amount, toAccountID)
+    if err != nil {
+        return fmt.Errorf("failed to credit to account %d: %w", toAccountID, err)
+    }
+    
+    // 【STEP 4】監査ログの記録（同一トランザクション内）
+    _, err = tx.Exec("INSERT INTO transfer_log (from_account, to_account, amount, timestamp) VALUES (?, ?, ?, NOW())",
+                     fromAccountID, toAccountID, amount)
+    if err != nil {
+        return fmt.Errorf("failed to log transfer: %w", err)
+    }
+    
+    // 【成功】defer文でコミットが実行される
+    // ACID特性により以下が保証される：
+    // - Atomicity: 全操作が成功または全てロールバック
+    // - Consistency: 残高の総和が変わらない
+    // - Isolation: 他のトランザクションからは中間状態が見えない
+    // - Durability: コミット後は障害があっても永続化される
+    
     return nil
 }
 ```

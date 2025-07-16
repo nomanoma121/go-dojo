@@ -35,23 +35,50 @@ Consumer Crash → System Recovery → Reprocess Messages
 #### 1. メッセージIDベースの重複検出
 
 ```go
+// 【冪等性実装】メモリベースの重複検出パターン
 type IdempotentConsumer struct {
-    processedMessages map[string]bool
-    mu               sync.RWMutex
+    processedMessages map[string]bool  // 【重複検出】処理済みメッセージID管理
+    mu               sync.RWMutex     // 【排他制御】並行安全性の保証
 }
 
 func (c *IdempotentConsumer) ProcessMessage(msg *Message) error {
+    // 【STEP 1】重複チェック（読み取りロック）
+    c.mu.RLock()
+    alreadyProcessed := c.processedMessages[msg.ID]
+    c.mu.RUnlock()
+    
+    if alreadyProcessed {
+        // 【冪等性保証】重複メッセージは安全にスキップ
+        log.Printf("Message %s already processed, skipping", msg.ID)
+        return nil  // エラーではなく成功として扱う
+    }
+    
+    // 【STEP 2】実際の処理を実行
     c.mu.Lock()
     defer c.mu.Unlock()
     
+    // 【ダブルチェック】ロック取得後に再確認
+    // 他のGoroutineが同時に処理していた可能性
     if c.processedMessages[msg.ID] {
-        log.Printf("Message %s already processed, skipping", msg.ID)
+        log.Printf("Message %s processed by another goroutine", msg.ID)
         return nil
     }
     
+    // 【ビジネスロジック実行】
     err := c.doProcess(msg)
     if err == nil {
+        // 【成功時のみ記録】エラー時は再処理を許可
         c.processedMessages[msg.ID] = true
+        
+        // 【注意点】：
+        // 1. メモリベースなので再起動時にリセットされる
+        // 2. メモリ使用量が増加し続ける可能性
+        // 3. 分散環境では各インスタンスが独立した状態を持つ
+        //
+        // 【改善案】：
+        // - 定期的なクリーンアップ処理
+        // - TTL付きのキャッシュ使用
+        // - データベースベースの永続化
     }
     
     return err

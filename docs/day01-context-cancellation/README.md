@@ -13,19 +13,28 @@ Goの並行プログラミングにおいて最も重要な概念の一つであ
 #### 1. Goroutineリークの問題
 
 ```go
-// 問題のある例：キャンセル機能なし
+// 【問題のある例】：キャンセル機能なし - この実装は絶対に避けるべき
 func badExample() {
     for i := 0; i < 1000; i++ {
         go func(id int) {
+            // 【危険】無限ループするGoroutine
             for {
-                // 無限ループするGoroutine
+                // 【問題点1】停止条件が存在しない
+                // この処理は永続的に実行され続け、プログラム終了後も残存する
                 time.Sleep(time.Second)
                 fmt.Printf("Worker %d is working...\n", id)
-                // 停止する方法がない！
+                
+                // 【問題点2】外部からの制御が不可能
+                // このGoroutineを停止する手段が一切提供されていない
+                // シグナル処理、タイムアウト、手動停止のすべてが不可能
             }
-        }(i)
+        }(i) // 【重要】ループ変数をキャプチャしてGoroutineに渡す
     }
-    // main関数が終了してもGoroutineは残り続ける
+    
+    // 【致命的問題】main関数が終了してもGoroutineは残り続ける
+    // - 1000個のGoroutineが永続的にシステムリソースを消費
+    // - プロセス終了時にGoroutineは強制終了されるが、グレースフルではない
+    // - 実際のサーバーアプリケーションでは重大なメモリリークの原因となる
 }
 ```
 
@@ -85,23 +94,49 @@ import (
     "time"
 )
 
-// キャンセル可能なContextを作成
+// 【正しい実装】キャンセル可能なContextを作成
+// この関数はContextパッケージの基本的な使用パターンを示しています
 func createCancellableContext() {
-    // 親Context（通常はcontext.Background()）
+    // 【Step 1】親Context（通常はcontext.Background()）
+    // context.Background()は以下の特徴を持つルートContext：
+    // - キャンセルされない（Done()チャネルはnil）
+    // - デッドラインを持たない
+    // - 値を保持しない
+    // - すべてのContextツリーのルートとして使用される
     parentCtx := context.Background()
     
-    // キャンセル機能付きContextを作成
+    // 【Step 2】キャンセル機能付きContextを作成
+    // context.WithCancel()は以下を返す：
+    // - ctx: 新しいキャンセル可能なContext
+    // - cancel: キャンセル実行関数（context.CancelFunc型）
     ctx, cancel := context.WithCancel(parentCtx)
     
-    // 5秒後にキャンセル
+    // 【重要】cancel()の役割：
+    // 1. ctx.Done()チャネルをクローズする
+    // 2. ctx.Err()がcontext.Canceledを返すようにする
+    // 3. このContextから派生したすべての子Contextもキャンセルする
+    
+    // 【Step 3】5秒後にキャンセルするGoroutineを起動
     go func() {
         time.Sleep(5 * time.Second)
         fmt.Println("Cancelling context...")
-        cancel() // これによりctx.Done()チャネルがクローズされる
+        
+        // 【キャンセル実行】これによりctx.Done()チャネルがクローズされる
+        // このタイミングで、このContextを監視しているすべてのGoroutineに
+        // キャンセルシグナルが伝播される
+        cancel()
     }()
     
-    // Contextのキャンセルを待機
+    // 【Step 4】Contextのキャンセルを待機
+    // <-ctx.Done() はキャンセルされるまでブロックする
+    // Done()チャネルがクローズされると、この行の実行が継続される
     <-ctx.Done()
+    
+    // 【Step 5】キャンセル理由の確認
+    // ctx.Err()はキャンセル理由を返す：
+    // - context.Canceled: cancel()関数が呼ばれた場合
+    // - context.DeadlineExceeded: タイムアウトが発生した場合
+    // - nil: まだキャンセルされていない場合
     fmt.Printf("Context cancelled: %v\n", ctx.Err())
 }
 ```
@@ -111,75 +146,108 @@ func createCancellableContext() {
 #### 1. Worker Pool with Cancellation
 
 ```go
+// 【実践的なパターン】Worker Pool with Cancellation
+// 本格的なプロダクションシステムで使用される設計パターン
+
+// WorkerPool は複数のワーカーGoroutineを管理する構造体
 type WorkerPool struct {
-    workerCount int
-    workQueue   chan Work
-    ctx         context.Context
-    cancel      context.CancelFunc
-    wg          sync.WaitGroup
+    workerCount int                    // 【設定】ワーカー数
+    workQueue   chan Work             // 【キュー】作業待ちのタスク
+    ctx         context.Context       // 【制御】キャンセル用Context
+    cancel      context.CancelFunc    // 【制御】キャンセル実行関数
+    wg          sync.WaitGroup        // 【同期】ワーカー終了待機用
 }
 
+// Work はワーカーが処理するタスクを表現
 type Work struct {
-    ID   int
-    Data string
+    ID   int    // タスクの一意識別子
+    Data string // 処理対象のデータ
 }
 
+// 【コンストラクタ】新しいWorkerPoolを作成
 func NewWorkerPool(workerCount int) *WorkerPool {
+    // 【Context作成】キャンセル可能なContextを生成
     ctx, cancel := context.WithCancel(context.Background())
     
     return &WorkerPool{
         workerCount: workerCount,
+        // 【バッファ付きチャネル】100件まで作業をキューイング可能
+        // バッファサイズにより、プロデューサー側のブロッキングを軽減
         workQueue:   make(chan Work, 100),
         ctx:         ctx,
         cancel:      cancel,
     }
 }
 
+// 【起動】指定数のワーカーGoroutineを開始
 func (wp *WorkerPool) Start() {
     for i := 0; i < wp.workerCount; i++ {
-        wp.wg.Add(1)
-        go wp.worker(i)
+        wp.wg.Add(1)  // WaitGroupカウンターを増加
+        go wp.worker(i)  // 各ワーカーを独立したGoroutineで起動
     }
 }
 
+// 【ワーカー実装】各Goroutineで実行されるメインロジック
 func (wp *WorkerPool) worker(id int) {
+    // 【重要】defer wp.wg.Done()でWaitGroupカウンターを確実に減算
+    // パニック発生時でも必ず実行される
     defer wp.wg.Done()
     
+    // 【メインループ】キャンセルまたは作業受信を監視
     for {
         select {
+        // 【作業処理】キューから作業を受信
         case work := <-wp.workQueue:
-            // 作業を実行
+            // 【実際の作業実行】
             fmt.Printf("Worker %d processing work %d: %s\n", id, work.ID, work.Data)
-            time.Sleep(time.Millisecond * 100) // 模擬作業時間
             
+            // 【作業時間シミュレーション】100ms の処理時間
+            // 実際のアプリケーションでは、ここにビジネスロジックを実装
+            time.Sleep(time.Millisecond * 100)
+            
+        // 【キャンセル処理】Context.Done()チャネル監視
         case <-wp.ctx.Done():
-            // キャンセルシグナルを受信
+            // キャンセルシグナル受信時の処理
             fmt.Printf("Worker %d shutting down: %v\n", id, wp.ctx.Err())
-            return
+            return  // Goroutineを終了（defer文が実行される）
         }
     }
 }
 
+// 【作業追加】新しい作業をキューに追加（スレッドセーフ）
 func (wp *WorkerPool) AddWork(work Work) {
     select {
+    // 【正常ケース】キューに空きがある場合
     case wp.workQueue <- work:
         // 作業をキューに追加成功
+        
+    // 【シャットダウン中】すでにキャンセルされている場合
     case <-wp.ctx.Done():
-        // すでにキャンセルされている
+        // 新しい作業の受け付けを拒否
         fmt.Println("Cannot add work: pool is shutting down")
+        
+    // 【注意】この実装では、キューが満杯の場合のタイムアウト処理は省略
+    // プロダクション環境では、time.Afterを使ったタイムアウト処理も検討
     }
 }
 
+// 【シャットダウン】グレースフルな停止処理
 func (wp *WorkerPool) Shutdown() {
-    // キャンセルシグナルを送信
+    // 【Step 1】キャンセルシグナルを全ワーカーに送信
     wp.cancel()
     
-    // すべてのworkerの終了を待機
+    // 【Step 2】すべてのワーカーの終了を待機
+    // この呼び出しにより、実行中の作業が完了するまで待機
     wp.wg.Wait()
     
-    // リソースのクリーンアップ
-    close(wp.workQueue)
+    // 【Step 3】リソースのクリーンアップ
+    close(wp.workQueue)  // チャネルクローズでリソース解放
     fmt.Println("Worker pool shutdown complete")
+    
+    // 【設計のポイント】
+    // 1. 新しい作業の受け付けを即座に停止
+    // 2. 実行中の作業は完了まで待機（データ損失防止）
+    // 3. すべてのリソースを確実に解放
 }
 ```
 

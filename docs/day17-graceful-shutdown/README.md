@@ -41,11 +41,26 @@ import (
     "syscall"
 )
 
+// 【シグナルハンドリング】OS からのシャットダウンシグナルを安全に受信
 func setupSignalHandling() chan os.Signal {
+    // 【バッファ付きチャネル】シグナル取りこぼし防止のため容量1で作成
     sigChan := make(chan os.Signal, 1)
     
+    // 【重要】監視対象シグナルの登録
     // SIGINT (Ctrl+C) と SIGTERM を監視
     signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+    
+    // 【シグナルの詳細】：
+    // - SIGINT (2): 通常のインタラクティブ停止 (Ctrl+C)
+    //   使用場面：開発環境、手動停止、デバッグ時
+    //
+    // - SIGTERM (15): 優雅な終了要求 (kill <pid>)
+    //   使用場面：本番環境、デプロイツール、オーケストレーター
+    //   Docker: docker stop でSIGTERMが送信される
+    //   Kubernetes: Pod停止時にSIGTERMが送信される
+    //
+    // - SIGKILL (9): 強制終了（ハンドリング不可）
+    //   最後の手段、Graceful Shutdownは実行されない
     
     return sigChan
 }
@@ -73,31 +88,67 @@ func (srv *Server) Shutdown(ctx context.Context) error
 ### 基本的な実装パターン
 
 ```go
+// 【完全なGraceful Shutdown実装】プロダクション対応パターン
 func main() {
+    // 【HTTPサーバー設定】適切なタイムアウト設定も重要
     server := &http.Server{
-        Addr:    ":8080",
-        Handler: setupRoutes(),
+        Addr:         ":8080",
+        Handler:      setupRoutes(),
+        ReadTimeout:  10 * time.Second,
+        WriteTimeout: 10 * time.Second,
+        IdleTimeout:  60 * time.Second,
     }
     
-    // シグナルハンドリングの設定
+    // 【Step 1】シグナルハンドリングの設定
     sigChan := make(chan os.Signal, 1)
     signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
     
-    // サーバーを別のgoroutineで起動
+    // 【Step 2】サーバーを別のgoroutineで起動（ノンブロッキング）
     go func() {
+        log.Println("Server starting on :8080")
+        
+        // 【重要】ListenAndServe()は正常終了時にhttp.ErrServerClosedを返す
         if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            log.Fatalf("Server error: %v", err)
+            log.Fatalf("Server startup error: %v", err)
         }
+        log.Println("Server stopped accepting new connections")
     }()
     
-    log.Println("Server starting on :8080")
+    log.Println("Server ready - Press Ctrl+C to shutdown")
     
-    // シグナルを待機
-    <-sigChan
-    log.Println("Shutting down server...")
+    // 【Step 3】シグナルを待機（メインGoroutineをブロック）
+    sig := <-sigChan
+    log.Printf("Received signal: %v - Initiating graceful shutdown...", sig)
     
-    // タイムアウト付きでGraceful Shutdown
+    // 【Step 4】タイムアウト付きでGraceful Shutdown実行
+    // 30秒以内に全接続の処理完了を待機
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()  // リソースリーク防止
+    
+    // 【核心機能】server.Shutdown()の動作：
+    // 1. 新しい接続の受付を即座に停止
+    // 2. アイドル状態の接続を即座にクローズ
+    // 3. アクティブな接続の処理完了を待機
+    // 4. コンテキストタイムアウトで強制終了
+    if err := server.Shutdown(ctx); err != nil {
+        log.Printf("Server shutdown error: %v", err)
+        log.Println("Forcing server shutdown...")
+        
+        // 【最後の手段】強制終了
+        if err := server.Close(); err != nil {
+            log.Printf("Server close error: %v", err)
+        }
+    } else {
+        log.Println("Server shutdown completed successfully")
+    }
+    
+    // 【追加クリーンアップ】他のリソースの解放
+    // - データベース接続プール
+    // - 外部サービス接続
+    // - バックグラウンドワーカー
+    log.Println("Cleanup completed - Application terminated")
+}
+```
     defer cancel()
     
     if err := server.Shutdown(ctx); err != nil {

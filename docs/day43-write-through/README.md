@@ -47,23 +47,139 @@ Write-Through は、データベースへの書き込み処理と同時にキャ
 ### 実装例
 
 ```go
+// 【Write-Through基本実装】データベースとキャッシュの同期更新
 func (s *ProductService) UpdateProduct(ctx context.Context, product *Product) error {
-    // 1. データベースに書き込み
+    start := time.Now()
+    defer func() {
+        s.recordWriteLatency(time.Since(start))
+    }()
+    
+    // 【STEP 1】データベースへの書き込み（メインデータストア）
     err := s.db.UpdateProduct(ctx, product)
     if err != nil {
-        return err
+        s.recordDatabaseWriteError()
+        return fmt.Errorf("database update failed: %w", err)
     }
     
-    // 2. キャッシュにも書き込み
+    // 【成功】データベース書き込み完了
+    s.recordDatabaseWrite()
+    log.Printf("💾 Database updated: Product %d", product.ID)
+    
+    // 【STEP 2】キャッシュへの同期書き込み（Write-Through特性）
     cacheKey := productCacheKey(product.ID)
     err = s.cache.SetJSON(ctx, cacheKey, product, ProductCacheTTL)
     if err != nil {
-        // キャッシュ書き込み失敗時のロギング
-        log.Printf("Cache write failed: %v", err)
-        // データベースは既に更新済みなので、成功として扱う
+        // 【重要な設計判断】キャッシュ書き込み失敗時の戦略
+        s.recordCacheWriteError()
+        
+        if s.config.StrictConsistency {
+            // 【厳密な整合性モード】データベース更新をロールバック
+            log.Printf("❌ ROLLBACK: Cache write failed for product %d, reverting DB", product.ID)
+            
+            // 元の状態に戻すためのロールバック処理
+            if rollbackErr := s.rollbackDatabaseUpdate(ctx, product.ID); rollbackErr != nil {
+                log.Printf("💥 CRITICAL: Rollback failed for product %d: %v", product.ID, rollbackErr)
+                s.recordCriticalError()
+            }
+            
+            return fmt.Errorf("write-through failed, transaction rolled back: %w", err)
+        } else {
+            // 【柔軟な整合性モード】警告ログを出力してサービス継続
+            log.Printf("⚠️  Cache write failed for product %d: %v (continuing with eventual consistency)", product.ID, err)
+            
+            // 【非同期修復】後でキャッシュを修復する仕組み
+            s.scheduleAsyncCacheRepair(product.ID, product)
+        }
+    } else {
+        // 【成功】キャッシュ書き込み完了
+        s.recordCacheWrite()
+        log.Printf("⚡ Write-Through completed: Product %d (DB + Cache)", product.ID)
     }
     
     return nil
+}
+
+// 【非同期修復】キャッシュ書き込み失敗時の後処理
+func (s *ProductService) scheduleAsyncCacheRepair(productID int, product *Product) {
+    go func() {
+        // 【指数バックオフ】で再試行
+        backoff := 100 * time.Millisecond
+        maxRetries := 3
+        
+        for attempt := 0; attempt < maxRetries; attempt++ {
+            time.Sleep(backoff)
+            
+            repairCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+            cacheKey := productCacheKey(productID)
+            
+            if err := s.cache.SetJSON(repairCtx, cacheKey, product, ProductCacheTTL); err == nil {
+                log.Printf("🔧 Cache repair successful for product %d (attempt %d)", productID, attempt+1)
+                cancel()
+                return
+            }
+            
+            cancel()
+            backoff *= 2 // 指数バックオフ
+            log.Printf("🔧 Cache repair attempt %d failed for product %d", attempt+1, productID)
+        }
+        
+        log.Printf("💥 Cache repair failed permanently for product %d", productID)
+        s.recordPermanentCacheFailure()
+    }()
+}
+
+// 【ロールバック処理】データベース更新の取り消し
+func (s *ProductService) rollbackDatabaseUpdate(ctx context.Context, productID int) error {
+    // 【注意】実際の実装では元の値を事前に保存しておく必要がある
+    // ここでは簡略化して、削除またはマーク処理で対応
+    
+    log.Printf("⏪ Attempting rollback for product %d", productID)
+    
+    // オプション1: 更新前の値に戻す（要：更新前データの保存）
+    // return s.db.UpdateProduct(ctx, originalProduct)
+    
+    // オプション2: 無効フラグを設定
+    return s.db.MarkProductAsInconsistent(ctx, productID)
+}
+
+// 【メトリクス記録】運用監視用
+func (s *ProductService) recordDatabaseWrite() {
+    atomic.AddInt64(&s.metrics.DatabaseWrites, 1)
+}
+
+func (s *ProductService) recordCacheWrite() {
+    atomic.AddInt64(&s.metrics.CacheWrites, 1)
+}
+
+func (s *ProductService) recordDatabaseWriteError() {
+    atomic.AddInt64(&s.metrics.DatabaseWriteErrors, 1)
+}
+
+func (s *ProductService) recordCacheWriteError() {
+    atomic.AddInt64(&s.metrics.CacheWriteErrors, 1)
+}
+
+func (s *ProductService) recordCriticalError() {
+    atomic.AddInt64(&s.metrics.CriticalErrors, 1)
+    // アラート送信なども可能
+}
+
+func (s *ProductService) recordPermanentCacheFailure() {
+    atomic.AddInt64(&s.metrics.PermanentCacheFailures, 1)
+}
+
+func (s *ProductService) recordWriteLatency(duration time.Duration) {
+    s.metrics.mu.Lock()
+    defer s.metrics.mu.Unlock()
+    
+    // 指数移動平均で書き込み時間を追跡
+    if s.metrics.AvgWriteTime == 0 {
+        s.metrics.AvgWriteTime = duration
+    } else {
+        s.metrics.AvgWriteTime = time.Duration(
+            float64(s.metrics.AvgWriteTime)*0.9 + float64(duration)*0.1,
+        )
+    }
 }
 ```
 

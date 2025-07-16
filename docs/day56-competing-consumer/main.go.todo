@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
-// TODO: Message構造体を実装してください
+// Message メッセージ構造体
 type Message struct {
-	// TODO: メッセージに必要なフィールドを定義
 	ID        int       // メッセージの一意識別子
 	Data      string    // メッセージの内容
 	RetryCount int      // 再試行回数
@@ -17,59 +17,89 @@ type Message struct {
 	Priority  string    // 優先度（オプション）
 }
 
-// TODO: Queue インターフェースを実装してください
+// Queue インターフェース
 type Queue interface {
-	// TODO: 以下のメソッドを定義
 	Enqueue(msg Message) error                        // メッセージをキューに追加
 	Dequeue(ctx context.Context) (*Message, error)    // メッセージをキューから取得
 	Size() int                                        // キューのサイズを取得
 	Close() error                                     // キューをクローズ
 }
 
-// TODO: InMemoryQueue構造体を実装してください
+// InMemoryQueue インメモリキュー実装
 type InMemoryQueue struct {
-	// TODO: インメモリキューの実装に必要なフィールド
-	// - messages: メッセージを格納するスライス
-	// - mutex: 並行アクセス制御用
-	// - condition: 待機中のconsumerを通知するため
-	// - closed: キューがクローズされているかのフラグ
+	messages []Message
+	mutex    sync.RWMutex
+	cond     *sync.Cond
+	closed   bool
 }
 
-// TODO: NewInMemoryQueue関数を実装してください
+// NewInMemoryQueue 新しいインメモリキューを作成
 func NewInMemoryQueue() *InMemoryQueue {
-	// ここに実装
-	return nil
+	q := &InMemoryQueue{
+		messages: make([]Message, 0),
+	}
+	q.cond = sync.NewCond(&q.mutex)
+	return q
 }
 
-// TODO: Enqueue メソッドを実装してください
+// Enqueue メッセージをキューに追加
 func (q *InMemoryQueue) Enqueue(msg Message) error {
-	// TODO: 以下の処理を実装
-	// 1. キューがクローズされていないかチェック
-	// 2. メッセージをキューに追加
-	// 3. 待機中のconsumerに通知
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	
+	if q.closed {
+		return fmt.Errorf("queue is closed")
+	}
+	
+	q.messages = append(q.messages, msg)
+	q.cond.Signal()
 	return nil
 }
 
-// TODO: Dequeue メソッドを実装してください
+// Dequeue メッセージをキューから取得
 func (q *InMemoryQueue) Dequeue(ctx context.Context) (*Message, error) {
-	// TODO: 以下の処理を実装
-	// 1. キューが空でなくなるまで待機
-	// 2. コンテキストのキャンセレーションをチェック
-	// 3. メッセージを取得してキューから削除
-	return nil, nil
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	
+	for len(q.messages) == 0 && !q.closed {
+		done := make(chan struct{})
+		go func() {
+			q.cond.Wait()
+			close(done)
+		}()
+		
+		q.mutex.Unlock()
+		select {
+		case <-ctx.Done():
+			q.mutex.Lock()
+			return nil, ctx.Err()
+		case <-done:
+			q.mutex.Lock()
+		}
+	}
+	
+	if q.closed && len(q.messages) == 0 {
+		return nil, fmt.Errorf("queue is closed")
+	}
+	
+	msg := q.messages[0]
+	q.messages = q.messages[1:]
+	return &msg, nil
 }
 
-// TODO: Size メソッドを実装してください
+// Size キューのサイズを取得
 func (q *InMemoryQueue) Size() int {
-	// ここに実装
-	return 0
+	q.mutex.RLock()
+	defer q.mutex.RUnlock()
+	return len(q.messages)
 }
 
-// TODO: Close メソッドを実装してください
+// Close キューをクローズ
 func (q *InMemoryQueue) Close() error {
-	// TODO: 以下の処理を実装
-	// 1. クローズフラグを設定
-	// 2. 待機中の全consumerに通知
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	q.closed = true
+	q.cond.Broadcast()
 	return nil
 }
 

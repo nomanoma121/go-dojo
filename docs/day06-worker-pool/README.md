@@ -16,14 +16,34 @@
 Webサーバーやバッチ処理システムでは、大量のタスクを並行処理する必要があります。しかし、タスクごとに新しいGoroutineを作成すると、以下の問題が発生します：
 
 ```go
-// 問題のある例：無制限のGoroutine作成
+// ❌ 【問題のある例】：無制限のGoroutine作成 - システム破綻の原因
 func processTasksBadly(tasks []Task) {
     for _, task := range tasks {
         go func(t Task) {
-            // 処理...（重い処理）
+            // 【致命的問題】各タスクに対して新しいGoroutineを作成
+            // 問題の詳細：
+            // 1. Goroutineスタック: 各Goroutine = 2-8KB
+            // 2. 100万タスク = 2-8GB のメモリ消費
+            // 3. CPUスケジューラーの負荷爆発
+            // 4. OSレベルでのリソース制限に到達
+            
+            processTaskExpensive(t)  // 重い処理（DB呼び出し、API呼び出し等）
+            
+            // 【追加問題】：
+            // - 同時DB接続数がDB接続プール上限を超過
+            // - 外部API呼び出しが制限を超えてレート制限発動
+            // - ファイルディスクリプタ枯渇
+            // - メモリ枯渇によるOOM Kill
         }(task)
     }
+    
+    // 【災害シナリオ】：
     // 100万タスクがあれば100万個のGoroutineが作成される！
+    // 結果：
+    // - メモリ使用量: 数GB
+    // - CPU使用率: 100%（コンテキストスイッチオーバーヘッド）
+    // - アプリケーション応答停止
+    // - 最悪の場合、サーバークラッシュ
 }
 ```
 
@@ -43,41 +63,70 @@ import (
     "context"
 )
 
+// 【正しい実装】Worker Poolパターン - 本格的なプロダクション対応設計
 type WorkerPool struct {
-    numWorkers int
-    taskQueue  chan Task
-    resultChan chan Result
-    quit       chan struct{}
-    wg         sync.WaitGroup
+    numWorkers int           // 【設定】ワーカーGoroutine数（固定）
+    taskQueue  chan Task    // 【キュー】処理待ちタスクのバッファ
+    resultChan chan Result  // 【出力】処理結果の収集チャネル
+    quit       chan struct{} // 【制御】シャットダウンシグナル
+    wg         sync.WaitGroup // 【同期】全ワーカーの終了待機
 }
 
+// 【コンストラクタ】適切なサイズ設定が重要
 func NewWorkerPool(numWorkers, queueSize int) *WorkerPool {
     return &WorkerPool{
         numWorkers: numWorkers,
+        
+        // 【重要】バッファ付きチャネルでブロッキングを回避
+        // queueSize設定の指針：
+        // - 小さすぎる: プロデューサーがブロック
+        // - 大きすぎる: メモリ使用量増加
+        // - 推奨: ワーカー数の2-10倍
         taskQueue:  make(chan Task, queueSize),
         resultChan: make(chan Result, queueSize),
+        
         quit:       make(chan struct{}),
     }
 }
 
+// 【起動】固定数のワーカーGoroutineを開始
 func (wp *WorkerPool) Start() {
     for i := 0; i < wp.numWorkers; i++ {
         wp.wg.Add(1)
-        go wp.worker(i)
+        go wp.worker(i)  // 各ワーカーに一意IDを付与
     }
 }
 
+// 【ワーカー実装】各Goroutineで実行されるメインループ
 func (wp *WorkerPool) worker(id int) {
-    defer wp.wg.Done()
+    defer wp.wg.Done()  // 【重要】終了時にWaitGroupを減算
     
+    // 【メインループ】タスク処理またはシャットダウン待機
     for {
         select {
+        // 【タスク処理】キューからタスクを受信
         case task := <-wp.taskQueue:
-            // タスクを処理
+            // 【実際の処理】ここでビジネスロジックを実行
             result := processTask(task)
+            
+            // 【結果送信】処理結果を結果チャネルに送信
+            // 注意：resultChanが満杯の場合はブロックする可能性
             wp.resultChan <- result
             
+        // 【シャットダウン】quit チャネルからシグナル受信
         case <-wp.quit:
+            // 【グレースフル終了】現在処理中のタスクを完了してから終了
+            return
+        }
+    }
+}
+
+// 【パフォーマンス特性】：
+// - メモリ使用量: O(numWorkers) - 固定で予測可能
+// - CPU効率: CPUコア数に最適化されたワーカー数で最大効率
+// - スループット: タスク処理能力 × ワーカー数
+// - レイテンシ: キューサイズとワーカー数で調整可能
+```
             return
         }
     }
