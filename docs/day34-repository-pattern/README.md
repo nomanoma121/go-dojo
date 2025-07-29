@@ -6,6 +6,657 @@ DB操作のロジックをカプセル化し、ビジネスロジックから分
 
 📖 **解説**
 
+### Repositoryパターンの重要性
+
+```go
+// 【Repositoryパターンの重要性】データアクセス層の適切な抽象化と保守性向上
+// ❌ 問題例：データアクセスロジックが散在し保守不可能なシステム
+func catastrophicDirectDatabaseAccess() {
+    // 🚨 災害例：直接SQL操作でスパゲッティコード化
+    
+    http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+        // ❌ ハンドラに直接SQL書き込み（最悪のアンチパターン）
+        db, err := sql.Open("postgres", "postgres://user:pass@localhost/db")
+        if err != nil {
+            log.Fatal("Database connection failed:", err)
+        }
+        defer db.Close()
+        
+        // ❌ SQL文字列が各所に散在→保守地獄
+        query := "SELECT id, name, email FROM users WHERE deleted_at IS NULL"
+        rows, err := db.Query(query)
+        if err != nil {
+            http.Error(w, "Database error", http.StatusInternalServerError)
+            return
+        }
+        defer rows.Close()
+        
+        var users []User
+        for rows.Next() {
+            var u User
+            rows.Scan(&u.ID, &u.Name, &u.Email)
+            users = append(users, u)
+        }
+        
+        json.NewEncoder(w).Encode(users)
+    })
+    
+    http.HandleFunc("/users/create", func(w http.ResponseWriter, r *http.Request) {
+        var user User
+        json.NewDecoder(r.Body).Decode(&user)
+        
+        // ❌ 同じようなSQL文が別の場所にも（重複）
+        db, err := sql.Open("postgres", "postgres://user:pass@localhost/db")
+        if err != nil {
+            http.Error(w, "DB connection failed", http.StatusInternalServerError)
+            return
+        }
+        defer db.Close()
+        
+        // ❌ SQLインジェクション脆弱性（プレースホルダーなし）
+        insertQuery := fmt.Sprintf("INSERT INTO users (name, email) VALUES ('%s', '%s')", 
+            user.Name, user.Email)
+        
+        _, err = db.Exec(insertQuery)
+        if err != nil {
+            log.Printf("Insert failed: %v", err)
+            http.Error(w, "Failed to create user", http.StatusInternalServerError)
+            return
+        }
+        
+        w.WriteHeader(http.StatusCreated)
+    })
+    
+    // 【災害シナリオ】
+    // 1. 100箇所にSQL文が散在→仕様変更で100箇所修正
+    // 2. データベーススキーマ変更→全コード調査と修正
+    // 3. SQLインジェクション脆弱性→データ全削除・漏洩
+    // 4. トランザクション管理不備→データ整合性破綻
+    // 5. テスト不可能→品質保証不可、バグ多発
+    // 6. 接続プール管理なし→パフォーマンス最悪
+    
+    log.Println("❌ Starting server with direct database access...")
+    http.ListenAndServe(":8080", nil)
+    // 結果：保守不可能、セキュリティホール、パフォーマンス最悪、開発効率激減
+}
+
+// ✅ 正解：エンタープライズ級Repositoryパターンシステム
+type EnterpriseRepositorySystem struct {
+    // 【基本Repository層】
+    userRepo        UserRepository              // ユーザーデータ
+    productRepo     ProductRepository           // 商品データ  
+    orderRepo       OrderRepository             // 注文データ
+    auditRepo       AuditRepository             // 監査データ
+    
+    // 【高度なデータアクセス】
+    cacheRepo       CacheRepository             // キャッシュ統合
+    searchRepo      SearchRepository            // 全文検索
+    analyticsRepo   AnalyticsRepository         // 分析データ
+    timeSeriesRepo  TimeSeriesRepository        // 時系列データ
+    
+    // 【トランザクション管理】
+    unitOfWork      UnitOfWork                  // トランザクション境界
+    txManager       TransactionManager          // 分散トランザクション
+    sagaManager     SagaManager                 // Sagaパターン実装
+    
+    // 【パフォーマンス最適化】
+    connectionPool  *ConnectionPool             // 接続プール
+    queryOptimizer  *QueryOptimizer             // クエリ最適化
+    batchProcessor  *BatchProcessor             // バッチ処理
+    readReplicaManager *ReadReplicaManager      // リードレプリカ管理
+    
+    // 【監視・ログ】
+    queryLogger     *QueryLogger                // クエリログ
+    performanceMonitor *PerformanceMonitor      // パフォーマンス監視
+    alertManager    *AlertManager               // アラート管理
+    
+    // 【セキュリティ】
+    accessController *AccessController          // アクセス制御
+    dataEncryption  *DataEncryption             // データ暗号化
+    auditLogger     *AuditLogger                // 監査ログ
+    
+    // 【高可用性】
+    failoverManager *FailoverManager            // フェイルオーバー
+    backupManager   *BackupManager              // バックアップ管理
+    
+    mu              sync.RWMutex                // 設定変更保護
+}
+
+// 【重要関数】エンタープライズRepository初期化
+func NewEnterpriseRepositorySystem(config *RepositoryConfig) *EnterpriseRepositorySystem {
+    // 【接続プール初期化】
+    connectionPool := NewConnectionPool(&ConnectionPoolConfig{
+        MaxOpenConns:    config.MaxOpenConns,
+        MaxIdleConns:    config.MaxIdleConns,
+        ConnMaxLifetime: config.ConnMaxLifetime,
+        ConnMaxIdleTime: config.ConnMaxIdleTime,
+    })
+    
+    system := &EnterpriseRepositorySystem{
+        userRepo:        NewPostgreSQLUserRepository(connectionPool, config.UserTableConfig),
+        productRepo:     NewPostgreSQLProductRepository(connectionPool, config.ProductTableConfig),
+        orderRepo:       NewPostgreSQLOrderRepository(connectionPool, config.OrderTableConfig),
+        auditRepo:       NewPostgreSQLAuditRepository(connectionPool, config.AuditTableConfig),
+        cacheRepo:       NewRedisRepository(config.RedisConfig),
+        searchRepo:      NewElasticsearchRepository(config.ElasticsearchConfig),
+        analyticsRepo:   NewClickHouseRepository(config.ClickHouseConfig),
+        timeSeriesRepo:  NewInfluxDBRepository(config.InfluxDBConfig),
+        unitOfWork:      NewUnitOfWork(connectionPool),
+        txManager:       NewTransactionManager(config.TxConfig),
+        sagaManager:     NewSagaManager(config.SagaConfig),
+        connectionPool:  connectionPool,
+        queryOptimizer:  NewQueryOptimizer(config.OptimizationConfig),
+        batchProcessor:  NewBatchProcessor(config.BatchConfig),
+        readReplicaManager: NewReadReplicaManager(config.ReplicaConfig),
+        queryLogger:     NewQueryLogger(config.LogConfig),
+        performanceMonitor: NewPerformanceMonitor(config.MonitorConfig),
+        alertManager:    NewAlertManager(config.AlertConfig),
+        accessController: NewAccessController(config.SecurityConfig),
+        dataEncryption:  NewDataEncryption(config.EncryptionConfig),
+        auditLogger:     NewAuditLogger(config.AuditConfig),
+        failoverManager: NewFailoverManager(config.FailoverConfig),
+        backupManager:   NewBackupManager(config.BackupConfig),
+    }
+    
+    // 【重要】バックグラウンド処理開始
+    go system.startConnectionPoolMonitoring()
+    go system.startQueryPerformanceAnalysis()
+    go system.startHealthChecking()
+    go system.startBackupScheduling()
+    
+    log.Printf("🗄️  Enterprise repository system initialized")
+    log.Printf("   Connection pool: max_open=%d, max_idle=%d", 
+        config.MaxOpenConns, config.MaxIdleConns)
+    log.Printf("   Read replicas: %d configured", len(config.ReplicaConfig.Replicas))
+    log.Printf("   Cache layer: %s", config.RedisConfig.ClusterNodes)
+    log.Printf("   Search engine: %s", config.ElasticsearchConfig.Addresses)
+    
+    return system
+}
+
+// 【核心インターフェース】汎用Repository基底
+type BaseRepository[T Entity] interface {
+    // 【基本CRUD操作】
+    Create(ctx context.Context, entity T) error
+    GetByID(ctx context.Context, id EntityID) (T, error)
+    Update(ctx context.Context, entity T) error
+    Delete(ctx context.Context, id EntityID) error
+    
+    // 【検索・フィルタリング】
+    FindBySpec(ctx context.Context, spec Specification[T]) ([]T, error)
+    List(ctx context.Context, opts ListOptions) ([]T, error)
+    Count(ctx context.Context, spec Specification[T]) (int64, error)
+    
+    // 【バッチ操作】
+    CreateBatch(ctx context.Context, entities []T) error
+    UpdateBatch(ctx context.Context, entities []T) error
+    DeleteBatch(ctx context.Context, ids []EntityID) error
+    
+    // 【トランザクション対応】
+    WithTx(tx Transaction) BaseRepository[T]
+    
+    // 【パフォーマンス最適化】
+    Preload(ctx context.Context, relations ...string) BaseRepository[T]
+    WithCache(ctx context.Context, ttl time.Duration) BaseRepository[T]
+    WithReadReplica(ctx context.Context) BaseRepository[T]
+}
+
+// 【高度な実装】PostgreSQLユーザーRepository
+type PostgreSQLUserRepository struct {
+    // 【データアクセス】
+    pool            *ConnectionPool             // 接続プール
+    tx              Transaction                 // トランザクション
+    cache           CacheRepository             // キャッシュ層
+    readReplica     *ReadReplicaManager         // リードレプリカ
+    
+    // 【設定・最適化】
+    tableConfig     *TableConfig                // テーブル設定
+    queryBuilder    *QueryBuilder               // クエリビルダー
+    queryOptimizer  *QueryOptimizer             // クエリ最適化
+    
+    // 【監視・ログ】
+    queryLogger     *QueryLogger                // クエリログ
+    metricsCollector *MetricsCollector          // メトリクス収集
+    
+    // 【セキュリティ】
+    accessController *AccessController          // アクセス制御
+    dataEncryption  *DataEncryption             // データ暗号化
+    auditLogger     *AuditLogger                // 監査ログ
+    
+    // 【設定】
+    useCache        bool                        // キャッシュ使用フラグ
+    useReadReplica  bool                        // リードレプリカ使用フラグ
+    preloadRelations []string                   // プリロード関係
+    
+    mu              sync.RWMutex                // 設定変更保護
+}
+
+// 【重要関数】PostgreSQLユーザーRepository初期化
+func NewPostgreSQLUserRepository(
+    pool *ConnectionPool, 
+    config *TableConfig,
+) UserRepository {
+    return &PostgreSQLUserRepository{
+        pool:            pool,
+        tableConfig:     config,
+        queryBuilder:    NewQueryBuilder(config.TableName, config.Schema),
+        queryOptimizer:  pool.GetQueryOptimizer(),
+        queryLogger:     pool.GetQueryLogger(),
+        metricsCollector: pool.GetMetricsCollector(),
+        accessController: pool.GetAccessController(),
+        dataEncryption:  pool.GetDataEncryption(),
+        auditLogger:     pool.GetAuditLogger(),
+        cache:           pool.GetCacheRepository(),
+        readReplica:     pool.GetReadReplicaManager(),
+    }
+}
+
+// 【核心メソッド】高度なCreate実装
+func (r *PostgreSQLUserRepository) Create(ctx context.Context, user *User) error {
+    startTime := time.Now()
+    operationID := generateOperationID()
+    
+    // 【STEP 1】アクセス制御チェック
+    if !r.accessController.CanCreate(ctx, "users", user) {
+        r.auditLogger.LogUnauthorizedAccess(ctx, operationID, "CREATE", "users", user.ID)
+        return ErrUnauthorized
+    }
+    
+    // 【STEP 2】データバリデーション
+    if err := r.validateUser(user); err != nil {
+        r.metricsCollector.RecordValidationError("users", "create")
+        return fmt.Errorf("validation failed: %w", err)
+    }
+    
+    // 【STEP 3】機密データ暗号化
+    encryptedUser, err := r.dataEncryption.EncryptUserData(user)
+    if err != nil {
+        r.metricsCollector.RecordEncryptionError("users", "create")
+        return fmt.Errorf("encryption failed: %w", err)
+    }
+    
+    // 【STEP 4】重複チェック（キャッシュ経由）
+    existing, err := r.findByEmailFromCache(ctx, user.Email)
+    if err != nil && !errors.Is(err, ErrNotFound) {
+        return fmt.Errorf("duplicate check failed: %w", err)
+    }
+    if existing != nil {
+        r.metricsCollector.RecordDuplicateError("users", "email")
+        return ErrDuplicateEmail
+    }
+    
+    // 【STEP 5】SQLクエリ生成・最適化
+    query, args := r.queryBuilder.Insert().
+        Values(map[string]interface{}{
+            "id":           encryptedUser.ID,
+            "username":     encryptedUser.Username,
+            "email":        encryptedUser.Email,
+            "password_hash": encryptedUser.PasswordHash,
+            "profile_data": encryptedUser.ProfileData,
+            "created_at":   time.Now(),
+            "updated_at":   time.Now(),
+        }).
+        Returning("id", "created_at").
+        Build()
+    
+    // クエリ最適化
+    optimizedQuery := r.queryOptimizer.OptimizeInsert(query, args)
+    
+    // 【STEP 6】データベース実行
+    var db QueryExecutor
+    if r.tx != nil {
+        db = r.tx
+    } else {
+        conn, err := r.pool.AcquireWriteConnection(ctx)
+        if err != nil {
+            r.metricsCollector.RecordConnectionError("write")
+            return fmt.Errorf("connection acquisition failed: %w", err)
+        }
+        defer r.pool.ReleaseConnection(conn)
+        db = conn
+    }
+    
+    // クエリ実行
+    var createdAt time.Time
+    err = db.QueryRowContext(ctx, optimizedQuery.SQL, optimizedQuery.Args...).
+        Scan(&user.ID, &createdAt)
+    
+    if err != nil {
+        r.queryLogger.LogFailedQuery(ctx, operationID, optimizedQuery.SQL, err)
+        r.metricsCollector.RecordQueryError("users", "create")
+        
+        // PostgreSQL固有エラーの変換
+        if isPGDuplicateKeyError(err) {
+            return ErrDuplicateKey
+        }
+        return fmt.Errorf("insert execution failed: %w", err)
+    }
+    
+    // 【STEP 7】作成完了処理
+    user.CreatedAt = createdAt
+    user.UpdatedAt = createdAt
+    
+    // 【STEP 8】キャッシュ更新
+    if r.useCache {
+        cacheKey := fmt.Sprintf("user:id:%s", user.ID)
+        r.cache.Set(ctx, cacheKey, user, 10*time.Minute)
+        
+        emailCacheKey := fmt.Sprintf("user:email:%s", user.Email)
+        r.cache.Set(ctx, emailCacheKey, user, 10*time.Minute)
+    }
+    
+    // 【STEP 9】監査ログ記録
+    r.auditLogger.LogDataAccess(ctx, &AuditEntry{
+        OperationID:   operationID,
+        EntityType:    "users",
+        EntityID:      user.ID,
+        Operation:     "CREATE",
+        ActorID:       getActorIDFromContext(ctx),
+        Data:          user,
+        Timestamp:     time.Now(),
+        IPAddress:     getIPFromContext(ctx),
+        UserAgent:     getUserAgentFromContext(ctx),
+    })
+    
+    // 【STEP 10】メトリクス記録
+    duration := time.Since(startTime)
+    r.metricsCollector.RecordQueryDuration("users", "create", duration)
+    r.metricsCollector.RecordSuccessfulOperation("users", "create")
+    
+    // 【STEP 11】クエリログ記録
+    r.queryLogger.LogSuccessfulQuery(ctx, &QueryLog{
+        OperationID: operationID,
+        Query:       optimizedQuery.SQL,
+        Args:        optimizedQuery.Args,
+        Duration:    duration,
+        RowsAffected: 1,
+        EntityType:  "users",
+        Operation:   "CREATE",
+    })
+    
+    return nil
+}
+
+// 【核心メソッド】高度なFindBySpec実装
+func (r *PostgreSQLUserRepository) FindBySpec(
+    ctx context.Context, 
+    spec UserSpecification,
+) ([]*User, error) {
+    startTime := time.Now()
+    operationID := generateOperationID()
+    
+    // 【STEP 1】アクセス制御チェック
+    if !r.accessController.CanRead(ctx, "users", spec) {
+        r.auditLogger.LogUnauthorizedAccess(ctx, operationID, "READ", "users", "")
+        return nil, ErrUnauthorized
+    }
+    
+    // 【STEP 2】キャッシュチェック
+    if r.useCache {
+        cacheKey := spec.CacheKey()
+        if cached, err := r.cache.Get(ctx, cacheKey); err == nil {
+            var users []*User
+            if err := json.Unmarshal(cached, &users); err == nil {
+                r.metricsCollector.RecordCacheHit("users", "find_by_spec")
+                return users, nil
+            }
+        }
+        r.metricsCollector.RecordCacheMiss("users", "find_by_spec")
+    }
+    
+    // 【STEP 3】クエリ生成・最適化
+    queryBuilder := r.queryBuilder.Select().
+        Columns("id", "username", "email", "profile_data", "created_at", "updated_at")
+    
+    // Specification適用
+    whereClause, args := spec.ToSQL()
+    queryBuilder = queryBuilder.Where(whereClause, args...)
+    
+    // プリロード関係の処理
+    for _, relation := range r.preloadRelations {
+        queryBuilder = queryBuilder.Join(relation)
+    }
+    
+    query, queryArgs := queryBuilder.Build()
+    optimizedQuery := r.queryOptimizer.OptimizeSelect(query, queryArgs)
+    
+    // 【STEP 4】データベース接続取得
+    var db QueryExecutor
+    if r.useReadReplica {
+        conn, err := r.readReplica.AcquireReadConnection(ctx)
+        if err != nil {
+            // フォールバック：マスター接続
+            conn, err = r.pool.AcquireReadConnection(ctx)
+            if err != nil {
+                r.metricsCollector.RecordConnectionError("read")
+                return nil, fmt.Errorf("connection acquisition failed: %w", err)
+            }
+        }
+        defer r.pool.ReleaseConnection(conn)
+        db = conn
+    } else {
+        conn, err := r.pool.AcquireReadConnection(ctx)
+        if err != nil {
+            r.metricsCollector.RecordConnectionError("read")
+            return nil, fmt.Errorf("connection acquisition failed: %w", err)
+        }
+        defer r.pool.ReleaseConnection(conn)
+        db = conn
+    }
+    
+    // 【STEP 5】クエリ実行
+    rows, err := db.QueryContext(ctx, optimizedQuery.SQL, optimizedQuery.Args...)
+    if err != nil {
+        r.queryLogger.LogFailedQuery(ctx, operationID, optimizedQuery.SQL, err)
+        r.metricsCollector.RecordQueryError("users", "find_by_spec")
+        return nil, fmt.Errorf("query execution failed: %w", err)
+    }
+    defer rows.Close()
+    
+    // 【STEP 6】結果セット処理
+    var users []*User
+    rowCount := 0
+    
+    for rows.Next() {
+        user := &User{}
+        var encryptedProfileData []byte
+        
+        err := rows.Scan(
+            &user.ID,
+            &user.Username,
+            &user.Email,
+            &encryptedProfileData,
+            &user.CreatedAt,
+            &user.UpdatedAt,
+        )
+        if err != nil {
+            r.metricsCollector.RecordScanError("users")
+            return nil, fmt.Errorf("row scan failed: %w", err)
+        }
+        
+        // データ復号化
+        if err := r.dataEncryption.DecryptUserProfile(user, encryptedProfileData); err != nil {
+            r.metricsCollector.RecordDecryptionError("users", "find_by_spec")
+            log.Printf("Failed to decrypt user profile: %v", err)
+            // エラーログを記録するが処理続行
+        }
+        
+        users = append(users, user)
+        rowCount++
+    }
+    
+    if err := rows.Err(); err != nil {
+        r.metricsCollector.RecordQueryError("users", "find_by_spec")
+        return nil, fmt.Errorf("rows iteration failed: %w", err)
+    }
+    
+    // 【STEP 7】キャッシュ更新
+    if r.useCache && len(users) > 0 {
+        cacheKey := spec.CacheKey()
+        if cacheData, err := json.Marshal(users); err == nil {
+            r.cache.Set(ctx, cacheKey, cacheData, 5*time.Minute)
+        }
+    }
+    
+    // 【STEP 8】監査ログ記録
+    r.auditLogger.LogDataAccess(ctx, &AuditEntry{
+        OperationID:   operationID,
+        EntityType:    "users",
+        Operation:     "FIND_BY_SPEC",
+        ActorID:       getActorIDFromContext(ctx),
+        QuerySpec:     spec.String(),
+        ResultCount:   rowCount,
+        Timestamp:     time.Now(),
+        IPAddress:     getIPFromContext(ctx),
+        UserAgent:     getUserAgentFromContext(ctx),
+    })
+    
+    // 【STEP 9】メトリクス記録
+    duration := time.Since(startTime)
+    r.metricsCollector.RecordQueryDuration("users", "find_by_spec", duration)
+    r.metricsCollector.RecordRowsReturned("users", "find_by_spec", rowCount)
+    r.metricsCollector.RecordSuccessfulOperation("users", "find_by_spec")
+    
+    // 【STEP 10】クエリログ記録
+    r.queryLogger.LogSuccessfulQuery(ctx, &QueryLog{
+        OperationID:  operationID,
+        Query:        optimizedQuery.SQL,
+        Args:         optimizedQuery.Args,
+        Duration:     duration,
+        RowsReturned: rowCount,
+        EntityType:   "users",
+        Operation:    "FIND_BY_SPEC",
+    })
+    
+    return users, nil
+}
+
+// 【実用例】プロダクション環境でのRepository使用
+func ProductionRepositoryUsage() {
+    // 【設定】エンタープライズRepository設定
+    config := &RepositoryConfig{
+        MaxOpenConns:    50,
+        MaxIdleConns:    10,
+        ConnMaxLifetime: 1 * time.Hour,
+        ConnMaxIdleTime: 30 * time.Minute,
+        UserTableConfig: &TableConfig{
+            TableName: "users",
+            Schema:    "public",
+            PrimaryKey: "id",
+            Indexes:   []string{"email", "username", "created_at"},
+        },
+        RedisConfig: &RedisConfig{
+            ClusterNodes: []string{"redis-1:6379", "redis-2:6379", "redis-3:6379"},
+            Password:     getEnv("REDIS_PASSWORD"),
+        },
+        ElasticsearchConfig: &ElasticsearchConfig{
+            Addresses: []string{"es-1:9200", "es-2:9200", "es-3:9200"},
+            Username:  getEnv("ES_USERNAME"),
+            Password:  getEnv("ES_PASSWORD"),
+        },
+        ReplicaConfig: &ReplicaConfig{
+            Replicas: []ReplicaInfo{
+                {Host: "replica-1", Weight: 50},
+                {Host: "replica-2", Weight: 30},
+                {Host: "replica-3", Weight: 20},
+            },
+            LoadBalanceStrategy: "WEIGHTED_ROUND_ROBIN",
+        },
+        EncryptionConfig: &EncryptionConfig{
+            KeyID:       getEnv("ENCRYPTION_KEY_ID"),
+            Algorithm:   "AES-256-GCM",
+            RotationInterval: 30 * 24 * time.Hour, // 30日
+        },
+    }
+    
+    repoSystem := NewEnterpriseRepositorySystem(config)
+    
+    // 【ビジネスロジック層】
+    userService := &UserService{
+        userRepo:    repoSystem.userRepo,
+        auditRepo:   repoSystem.auditRepo,
+        unitOfWork:  repoSystem.unitOfWork,
+    }
+    
+    // 【HTTP ハンドラー】
+    http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+        ctx := r.Context()
+        
+        switch r.Method {
+        case http.MethodGet:
+            // 【検索】Specificationパターン使用
+            spec := &UserActiveSpecification{
+                CreatedAfter: time.Now().AddDate(0, -1, 0), // 1ヶ月以内
+            }
+            
+            users, err := repoSystem.userRepo.WithCache(ctx, 5*time.Minute).
+                WithReadReplica(ctx).
+                FindBySpec(ctx, spec)
+            
+            if err != nil {
+                http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+                return
+            }
+            
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(users)
+            
+        case http.MethodPost:
+            // 【作成】トランザクション使用
+            var user User
+            if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+                http.Error(w, "Invalid JSON", http.StatusBadRequest)
+                return
+            }
+            
+            err := userService.CreateUserWithProfile(ctx, &user)
+            if err != nil {
+                http.Error(w, "Failed to create user", http.StatusInternalServerError)
+                return
+            }
+            
+            w.Header().Set("Content-Type", "application/json")
+            w.WriteHeader(http.StatusCreated)
+            json.NewEncoder(w).Encode(user)
+        }
+    })
+    
+    // 【管理エンドポイント】
+    http.HandleFunc("/admin/repository/stats", func(w http.ResponseWriter, r *http.Request) {
+        stats := map[string]interface{}{
+            "connection_pool": repoSystem.connectionPool.GetStats(),
+            "cache_stats":     repoSystem.cacheRepo.GetStats(),
+            "query_stats":     repoSystem.queryLogger.GetStats(),
+            "performance":     repoSystem.performanceMonitor.GetStats(),
+        }
+        
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(stats)
+    })
+    
+    // 【サーバー起動】
+    server := &http.Server{
+        Addr:    ":8080",
+        Handler: nil,
+        ReadTimeout:  30 * time.Second,
+        WriteTimeout: 30 * time.Second,
+        IdleTimeout:  60 * time.Second,
+    }
+    
+    log.Printf("🚀 Enterprise repository server starting on :8080")
+    log.Printf("   Database connections: max_open=%d, max_idle=%d", 
+        config.MaxOpenConns, config.MaxIdleConns)
+    log.Printf("   Cache layer: Redis cluster with %d nodes", 
+        len(config.RedisConfig.ClusterNodes))
+    log.Printf("   Search engine: Elasticsearch with %d nodes", 
+        len(config.ElasticsearchConfig.Addresses))
+    log.Printf("   Read replicas: %d configured", len(config.ReplicaConfig.Replicas))
+    log.Printf("   Data encryption: %s", config.EncryptionConfig.Algorithm)
+    
+    log.Fatal(server.ListenAndServe())
+}
+```
+
 ## Repositoryパターンとは
 
 Repositoryパターンは、データアクセス層を抽象化するデザインパターンです。ビジネスロジックからデータベースの詳細を隠蔽し、データアクセスロジックを一箇所に集約することで、保守性とテスタビリティを向上させます。
