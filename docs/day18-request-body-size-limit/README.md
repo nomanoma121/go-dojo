@@ -8,7 +8,373 @@ HTTPリクエストボディのサイズを制限するミドルウェアを実�
 
 ### リクエストボディサイズ制限の重要性
 
-Web アプリケーションでは、悪意のあるクライアントが巨大なリクエストボディを送信することで、サーバーのメモリを枯渇させたり、ネットワーク帯域を占有する攻撃が可能です。適切なサイズ制限により、これらの攻撃からサーバーを保護できます。
+```go
+// 【リクエストボディサイズ制限の重要性】DoS攻撃とメモリ枯渇からの保護
+// ❌ 問題例：サイズ制限なしでの壊滅的なDoS攻撃被害
+func catastrophicNoBodySizeLimit() {
+    // 🚨 災害例：無制限なリクエストボディ受信でサーバー崩壊
+    
+    http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("Receiving upload request from %s", r.RemoteAddr)
+        
+        // ❌ サイズ制限なしでリクエストボディを読み取り
+        bodyBytes, err := ioutil.ReadAll(r.Body)
+        if err != nil {
+            http.Error(w, "Failed to read body", http.StatusInternalServerError)
+            return
+        }
+        
+        // ❌ 100GB のファイルでもメモリに全て読み込む
+        // メモリ使用量: 100GB × 同時接続数 = サーバークラッシュ
+        
+        log.Printf("Received %d bytes from %s", len(bodyBytes), r.RemoteAddr)
+        
+        // ❌ 攻撃者が100個の接続で10GBずつ送信
+        // 合計1TB のメモリ消費 → OOM Killer発動
+        // ❌ 正常なユーザーも巻き込まれてサービス全停止
+        // ❌ インフラコストが爆発的に増大
+        
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte("Upload processed"))
+    })
+    
+    log.Println("❌ Starting server without body size limits...")
+    http.ListenAndServe(":8080", nil)
+    // 結果：メモリ枯渇攻撃により数分でサーバーダウン、全サービス停止
+}
+
+// ✅ 正解：エンタープライズ級ボディサイズ制限システム
+type EnterpriseBodySizeLimiter struct {
+    // 【基本設定】
+    globalMaxSize     int64                    // グローバル最大サイズ
+    contentTypeLimits map[string]int64         // Content-Type別制限
+    
+    // 【高度な機能】
+    dynamicLimiter    *DynamicSizeLimiter      // 動的制限調整
+    progressTracker   *ProgressTracker         // 進捗追跡
+    rateLimiter       *UploadRateLimiter       // アップロード速度制限
+    
+    // 【セキュリティ】
+    blacklist         *IPBlacklist             // 悪意IPブラックリスト
+    anomalyDetector   *AnomalyDetector         // 異常検知システム
+    
+    // 【監視・ログ】
+    metrics           *DetailedMetrics         // 詳細メトリクス
+    logger            *log.Logger              // 構造化ログ
+    alertManager      *AlertManager            // アラート管理
+    
+    // 【リソース管理】
+    memoryMonitor     *MemoryMonitor           // メモリ使用量監視
+    connectionLimiter *ConnectionLimiter       // 同時接続数制限
+    
+    // 【設定管理】
+    configManager     *ConfigManager           // 動的設定管理
+    mu                sync.RWMutex             // 設定変更用ミューテックス
+}
+
+// 【重要関数】エンタープライズ級ボディサイズ制限システム初期化
+func NewEnterpriseBodySizeLimiter(config *LimiterConfig) *EnterpriseBodySizeLimiter {
+    limiter := &EnterpriseBodySizeLimiter{
+        globalMaxSize: config.GlobalMaxSize,
+        contentTypeLimits: map[string]int64{
+            "application/json":       1 << 20,     // 1MB - API calls
+            "application/xml":        2 << 20,     // 2MB - structured data
+            "multipart/form-data":    50 << 20,    // 50MB - file uploads
+            "image/jpeg":             10 << 20,    // 10MB - image files
+            "image/png":              10 << 20,    // 10MB - image files
+            "video/mp4":              500 << 20,   // 500MB - video files
+            "application/octet-stream": 100 << 20,  // 100MB - binary data
+        },
+        
+        dynamicLimiter:    NewDynamicSizeLimiter(config.BaseLimit),
+        progressTracker:   NewProgressTracker(config.MaxConcurrentUploads),
+        rateLimiter:       NewUploadRateLimiter(config.MaxUploadRate),
+        blacklist:         NewIPBlacklist(),
+        anomalyDetector:   NewAnomalyDetector(),
+        metrics:           NewDetailedMetrics(),
+        logger:            log.New(os.Stdout, "[BODY-LIMITER] ", log.LstdFlags),
+        alertManager:      NewAlertManager(),
+        memoryMonitor:     NewMemoryMonitor(),
+        connectionLimiter: NewConnectionLimiter(config.MaxConnections),
+        configManager:     NewConfigManager(),
+    }
+    
+    // 【重要】監視とアラートの開始
+    go limiter.startMonitoring()
+    go limiter.startAnomalyDetection()
+    go limiter.startMemoryMonitoring()
+    
+    limiter.logger.Printf("🚀 Enterprise body size limiter initialized")
+    limiter.logger.Printf("   Global limit: %.2f MB", float64(config.GlobalMaxSize)/1024/1024)
+    limiter.logger.Printf("   Content-type limits: %d configured", len(limiter.contentTypeLimits))
+    limiter.logger.Printf("   Max concurrent uploads: %d", config.MaxConcurrentUploads)
+    
+    return limiter
+}
+
+// 【核심メソッド】HTTPミドルウェア実装
+func (limiter *EnterpriseBodySizeLimiter) Middleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        startTime := time.Now()
+        requestID := generateRequestID()
+        
+        // 【STEP 1】事前セキュリティチェック
+        if blocked, reason := limiter.blacklist.IsBlocked(getClientIP(r)); blocked {
+            limiter.metrics.RecordBlocked(reason)
+            limiter.logger.Printf("❌ Blocked request from %s: %s", getClientIP(r), reason)
+            http.Error(w, "Request blocked", http.StatusForbidden)
+            return
+        }
+        
+        // 【STEP 2】同時接続数制限チェック
+        if !limiter.connectionLimiter.AllowConnection() {
+            limiter.metrics.RecordRejection("max_connections_exceeded")
+            limiter.logger.Printf("⚠️  Connection limit exceeded from %s", getClientIP(r))
+            http.Error(w, "Too many connections", http.StatusTooManyRequests)
+            return
+        }
+        defer limiter.connectionLimiter.ReleaseConnection()
+        
+        // 【STEP 3】Content-Type別制限取得
+        contentType := r.Header.Get("Content-Type")
+        mediaType, _, _ := mime.ParseMediaType(contentType)
+        
+        limiter.mu.RLock()
+        typeLimit, exists := limiter.contentTypeLimits[mediaType]
+        if !exists {
+            typeLimit = limiter.globalMaxSize
+        }
+        limiter.mu.RUnlock()
+        
+        // 動的制限との比較
+        dynamicLimit := limiter.dynamicLimiter.GetCurrentLimit()
+        effectiveLimit := min(typeLimit, dynamicLimit)
+        
+        limiter.logger.Printf("📊 Request %s: Content-Type=%s, Limit=%.2fMB", 
+            requestID, mediaType, float64(effectiveLimit)/1024/1024)
+        
+        // 【STEP 4】Content-Length事前チェック
+        if r.ContentLength > effectiveLimit {
+            limiter.metrics.RecordRejection("content_length_exceeded")
+            limiter.anomalyDetector.ReportSuspiciousActivity(getClientIP(r), "oversized_request", r.ContentLength)
+            
+            limiter.logger.Printf("❌ Content-Length exceeded: %d > %d (client: %s)", 
+                r.ContentLength, effectiveLimit, getClientIP(r))
+            
+            http.Error(w, fmt.Sprintf("Request body too large (limit: %.2f MB)", 
+                float64(effectiveLimit)/1024/1024), http.StatusRequestEntityTooLarge)
+            return
+        }
+        
+        // 【STEP 5】プログレストラッキング開始
+        if err := limiter.progressTracker.StartTracking(requestID, mediaType, r.ContentLength); err != nil {
+            limiter.metrics.RecordRejection("tracking_failed")
+            limiter.logger.Printf("❌ Failed to start progress tracking: %v", err)
+            http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+            return
+        }
+        defer limiter.progressTracker.FinishTracking(requestID)
+        
+        // 【STEP 6】レート制限チェック
+        if !limiter.rateLimiter.AllowUpload(getClientIP(r), r.ContentLength) {
+            limiter.metrics.RecordRejection("rate_limit_exceeded")
+            limiter.logger.Printf("⚠️  Upload rate limit exceeded for %s", getClientIP(r))
+            http.Error(w, "Upload rate limit exceeded", http.StatusTooManyRequests)
+            return
+        }
+        
+        // 【STEP 7】ボディリーダーのラップ
+        originalBody := r.Body
+        r.Body = &EnterpriseBodyReader{
+            reader:          originalBody,
+            maxSize:         effectiveLimit,
+            requestID:       requestID,
+            progressTracker: limiter.progressTracker,
+            rateLimiter:     limiter.rateLimiter,
+            metrics:         limiter.metrics,
+            logger:          limiter.logger,
+            clientIP:        getClientIP(r),
+            startTime:       startTime,
+            anomalyDetector: limiter.anomalyDetector,
+        }
+        
+        // 【STEP 8】次のハンドラーへ
+        limiter.metrics.RecordAccepted(mediaType)
+        next.ServeHTTP(w, r)
+        
+        // 【STEP 9】完了時の統計更新
+        duration := time.Since(startTime)
+        limiter.metrics.RecordProcessingTime(duration)
+        
+        limiter.logger.Printf("✅ Request %s completed in %v", requestID, duration)
+    })
+}
+
+// 【高度な機能】エンタープライズ級ボディリーダー
+type EnterpriseBodyReader struct {
+    reader          io.ReadCloser
+    maxSize         int64
+    bytesRead       int64
+    requestID       string
+    progressTracker *ProgressTracker
+    rateLimiter     *UploadRateLimiter
+    metrics         *DetailedMetrics
+    logger          *log.Logger
+    clientIP        string
+    startTime       time.Time
+    anomalyDetector *AnomalyDetector
+    lastProgressTime time.Time
+}
+
+// 【重要メソッド】高度なRead実装
+func (reader *EnterpriseBodyReader) Read(p []byte) (n int, err error) {
+    // 【制限チェック】
+    if reader.bytesRead >= reader.maxSize {
+        reader.metrics.RecordRejection("stream_size_exceeded")
+        reader.anomalyDetector.ReportSuspiciousActivity(reader.clientIP, "stream_size_exceeded", reader.bytesRead)
+        reader.logger.Printf("❌ Stream size exceeded for request %s: %d bytes", reader.requestID, reader.bytesRead)
+        return 0, &BodySizeExceededError{
+            RequestID: reader.requestID,
+            BytesRead: reader.bytesRead,
+            MaxSize:   reader.maxSize,
+        }
+    }
+    
+    // 【読み取り可能サイズ計算】
+    remaining := reader.maxSize - reader.bytesRead
+    if int64(len(p)) > remaining {
+        p = p[:remaining]
+    }
+    
+    // 【タイムアウト付き読み取り】
+    readDeadline := time.Now().Add(30 * time.Second)
+    if conn, ok := reader.reader.(interface{ SetReadDeadline(time.Time) error }); ok {
+        conn.SetReadDeadline(readDeadline)
+    }
+    
+    // 【実際の読み取り】
+    n, err = reader.reader.Read(p)
+    reader.bytesRead += int64(n)
+    
+    // 【進捗更新】
+    now := time.Now()
+    if now.Sub(reader.lastProgressTime) > 100*time.Millisecond {
+        reader.progressTracker.UpdateProgress(reader.requestID, int64(n))
+        reader.lastProgressTime = now
+        
+        // 転送速度計算
+        duration := now.Sub(reader.startTime)
+        if duration > 0 {
+            rate := float64(reader.bytesRead) / duration.Seconds()
+            reader.metrics.RecordTransferRate(rate)
+            
+            // 異常に遅い転送の検知（Slowloris攻撃対策）
+            if rate < 1024 && duration > 10*time.Second { // 1KB/s未満が10秒以上
+                reader.anomalyDetector.ReportSuspiciousActivity(reader.clientIP, "slow_transfer", int64(rate))
+                reader.logger.Printf("⚠️  Slow transfer detected from %s: %.2f bytes/sec", reader.clientIP, rate)
+            }
+        }
+    }
+    
+    // 【レート制限適用】
+    reader.rateLimiter.ApplyRateLimit(reader.clientIP, int64(n))
+    
+    // 【サイズ超過の最終チェック】
+    if reader.bytesRead > reader.maxSize {
+        reader.metrics.RecordRejection("stream_size_exceeded")
+        reader.logger.Printf("❌ Final size check failed for request %s: %d > %d", 
+            reader.requestID, reader.bytesRead, reader.maxSize)
+        return n, &BodySizeExceededError{
+            RequestID: reader.requestID,
+            BytesRead: reader.bytesRead,
+            MaxSize:   reader.maxSize,
+        }
+    }
+    
+    return n, err
+}
+
+// 【カスタムエラー型】詳細なエラー情報
+type BodySizeExceededError struct {
+    RequestID string
+    BytesRead int64
+    MaxSize   int64
+}
+
+func (e *BodySizeExceededError) Error() string {
+    return fmt.Sprintf("body size exceeded: %d bytes read, limit: %d bytes (request: %s)", 
+        e.BytesRead, e.MaxSize, e.RequestID)
+}
+
+// 【実用例】高負荷環境での実際の使用
+func ProductionBodySizeLimitingUsage() {
+    // 【初期化】本番環境設定
+    config := &LimiterConfig{
+        GlobalMaxSize:          100 << 20,  // 100MB
+        BaseLimit:              50 << 20,   // 50MB (動的調整ベース)
+        MaxConcurrentUploads:   50,         // 同時アップロード数
+        MaxUploadRate:          10 << 20,   // 10MB/s per IP
+        MaxConnections:         1000,       // 最大同時接続数
+    }
+    
+    limiter := NewEnterpriseBodySizeLimiter(config)
+    
+    // 【ルート設定】
+    mux := http.NewServeMux()
+    
+    // アップロードエンドポイント
+    mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+        
+        // リクエストボディ処理（制限が適用済み）
+        body, err := ioutil.ReadAll(r.Body)
+        if err != nil {
+            http.Error(w, "Failed to read body", http.StatusBadRequest)
+            return
+        }
+        
+        log.Printf("✅ Successfully processed %d bytes upload", len(body))
+        
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "status":       "success",
+            "bytes_received": len(body),
+            "timestamp":    time.Now().Unix(),
+        })
+    })
+    
+    // 管理用エンドポイント（メトリクス表示）
+    mux.HandleFunc("/admin/metrics", func(w http.ResponseWriter, r *http.Request) {
+        metrics := limiter.metrics.GetSummary()
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(metrics)
+    })
+    
+    // 【ミドルウェア適用】
+    handler := limiter.Middleware(mux)
+    
+    // 【サーバー起動】
+    server := &http.Server{
+        Addr:           ":8080",
+        Handler:        handler,
+        ReadTimeout:    30 * time.Second,
+        WriteTimeout:   30 * time.Second,
+        IdleTimeout:    60 * time.Second,
+        MaxHeaderBytes: 1 << 20, // 1MB
+    }
+    
+    log.Printf("🚀 Production server starting on :8080")
+    log.Printf("   Body size limits: Global=%.2fMB, Dynamic adjustment enabled", 
+        float64(config.GlobalMaxSize)/1024/1024)
+    log.Printf("   Security features: IP blacklist, anomaly detection, rate limiting")
+    
+    log.Fatal(server.ListenAndServe())
+}
+```
 
 ### 基本的なサイズ制限実装
 
