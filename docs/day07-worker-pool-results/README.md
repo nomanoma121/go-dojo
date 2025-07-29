@@ -16,19 +16,70 @@
 Worker Poolでタスクを並列処理した後、結果を適切に収集・管理することは非常に重要です。単純に結果を受け取るだけでは、以下の問題が発生します：
 
 ```go
-// 問題のある例：結果の管理が不十分
-func processTasksSimply() {
+// 【結果収集の重要性】Worker Poolからの効率的な結果管理
+// ❌ 問題例：不適切な結果管理によるカオス状態
+func badResultManagement() {
     pool := NewWorkerPool(5, 100)
     pool.Start()
     
+    // 🚨 災害例：タスクIDと結果の紐付けが不可能
     for i := 0; i < 1000; i++ {
         pool.SubmitTask(Task{ID: i, Data: i})
+        // ❌ タスクの送信順序と結果の到着順序が異なる
+        // ❌ どのタスクがどの結果を生成したか不明
     }
     
-    // どの結果がどのタスクのものかわからない
+    // 🚨 災害例：結果の順序が保証されない混沌状態
     for result := range pool.GetResults() {
-        fmt.Println(result) // 順序がバラバラ、エラー処理も困難
+        fmt.Println(result) 
+        // ❌ Task 1, Task 100, Task 5, Task 50... ランダムな順序
+        // ❌ エラー処理が困難（どのタスクが失敗したか不明）
+        // ❌ 進捗管理が不可能（完了したタスク数が不明）
     }
+    // 結果：データの整合性がない、デバッグが困難、運用不可能
+}
+
+// ✅ 正解：プロダクション品質の結果収集システム
+func properResultManagement() {
+    // 【STEP 1】結果コレクターの初期化
+    collector := NewResultCollector(1000, true) // 順序保証あり
+    collector.Start()
+    
+    pool := NewWorkerPool(5, 100)
+    pool.SetResultCollector(collector) // 結果の送信先を設定
+    pool.Start()
+    
+    // 【STEP 2】タスクの投入（順序付きID付与）
+    for i := 0; i < 1000; i++ {
+        task := Task{
+            ID:      i,
+            Data:    i,
+            Created: time.Now(),
+        }
+        pool.SubmitTask(task)
+        // ✅ 各タスクに一意のIDを付与
+        // ✅ 作成時刻を記録して処理時間を追跡
+    }
+    
+    // 【STEP 3】順序保証付き結果収集
+    results := collector.GetOrderedResults()
+    for result := range results {
+        // ✅ タスクID順（0, 1, 2, 3...）で結果を取得
+        // ✅ エラーハンドリングが明確
+        // ✅ 処理時間やワーカーIDなどの詳細情報が利用可能
+        
+        if result.Error != nil {
+            log.Printf("Task %d failed: %v", result.TaskID, result.Error)
+        } else {
+            log.Printf("Task %d completed in %v by worker %d", 
+                result.TaskID, result.Duration, result.WorkerID)
+        }
+    }
+    
+    // 【STEP 4】集約統計の取得
+    stats := collector.GetStatistics()
+    log.Printf("Success: %d, Errors: %d, Avg Duration: %v", 
+        stats.SuccessCount, stats.ErrorCount, stats.AverageDuration)
 }
 ```
 

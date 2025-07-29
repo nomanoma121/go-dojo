@@ -38,15 +38,150 @@ Fan-in / Fan-outパターンは、並行処理でデータの流れを制御す�
 データ処理システムでは、以下のような課題があります：
 
 ```go
-// 問題のある例：順次処理
-func processDataSequentially(data []int) []int {
-    var results []int
-    for _, item := range data {
-        // 重い処理が順番に実行される
-        result := heavyProcessing(item) // 1秒かかる処理
+// 【Fan-in/Fan-outの重要性】並行処理による性能向上の実現
+// ❌ 問題例：順次処理による性能の壊滅的な劣化
+func disastrousSequentialProcessing(data []DataItem) []ProcessedItem {
+    var results []ProcessedItem
+    start := time.Now()
+    
+    // 🚨 災害例：1つのCPUコアのみ使用
+    for i, item := range data {
+        log.Printf("Processing item %d sequentially...", i)
+        
+        // 重い処理（CPUバウンド + I/Oバウンド）
+        result := performExpensiveOperation(item) // 平均2秒
         results = append(results, result)
+        
+        // ❌ CPUの他の7コアが完全に遊んでいる状態
+        // ❌ I/O待機中もCPUリソースを占有
+        // ❌ 1000件処理するのに2000秒（33分）必要
     }
-    return results // 1000件なら1000秒かかる！
+    
+    duration := time.Since(start)
+    log.Printf("❌ Sequential processing took %v for %d items", duration, len(data))
+    // 結果：リソースの90%が無駄、ユーザー体験の最悪化
+    return results
+}
+
+// ✅ 正解：Fan-in/Fan-outによる高性能並行処理
+func efficientParallelProcessing(data []DataItem) []ProcessedItem {
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+    
+    numWorkers := runtime.NumCPU() // 利用可能なCPUコア数
+    log.Printf("🚀 Starting parallel processing with %d workers", numWorkers)
+    
+    // 【STEP 1】入力データをチャネルに送信
+    inputChan := make(chan DataItem, len(data))
+    go func() {
+        defer close(inputChan)
+        for _, item := range data {
+            select {
+            case inputChan <- item:
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+    
+    // 【STEP 2】Fan-out: 複数ワーカーに分散
+    workerChans := make([]<-chan ProcessedItem, numWorkers)
+    for i := 0; i < numWorkers; i++ {
+        workerChans[i] = startWorker(ctx, i, inputChan)
+    }
+    
+    // 【STEP 3】Fan-in: 結果を統合
+    results := fanInResults(ctx, workerChans)
+    
+    log.Printf("✅ Parallel processing completed efficiently")
+    return results
+    // 結果：8コア使用で処理時間が1/8に短縮（33分→4分）
+}
+
+// 【重要関数】個別ワーカーの実装
+func startWorker(ctx context.Context, workerID int, input <-chan DataItem) <-chan ProcessedItem {
+    output := make(chan ProcessedItem)
+    
+    go func() {
+        defer close(output)
+        processed := 0
+        
+        for {
+            select {
+            case item, ok := <-input:
+                if !ok {
+                    log.Printf("Worker %d processed %d items", workerID, processed)
+                    return
+                }
+                
+                // 【並行処理実行】各ワーカーが独立して処理
+                start := time.Now()
+                result := performExpensiveOperation(item)
+                duration := time.Since(start)
+                
+                result.WorkerID = workerID
+                result.ProcessingTime = duration
+                processed++
+                
+                // 【結果送信】Fan-inに向けて送信
+                select {
+                case output <- result:
+                    if processed%100 == 0 {
+                        log.Printf("Worker %d: processed %d items", workerID, processed)
+                    }
+                case <-ctx.Done():
+                    return
+                }
+                
+            case <-ctx.Done():
+                log.Printf("Worker %d cancelled after %d items", workerID, processed)
+                return
+            }
+        }
+    }()
+    
+    return output
+}
+
+// 【重要関数】Fan-inによる結果統合
+func fanInResults(ctx context.Context, inputs []<-chan ProcessedItem) []ProcessedItem {
+    var results []ProcessedItem
+    var wg sync.WaitGroup
+    var mu sync.Mutex
+    
+    // 【並行結果収集】全ワーカーからの結果を同時収集
+    for i, input := range inputs {
+        wg.Add(1)
+        go func(workerChan <-chan ProcessedItem, workerIndex int) {
+            defer wg.Done()
+            collected := 0
+            
+            for {
+                select {
+                case result, ok := <-workerChan:
+                    if !ok {
+                        log.Printf("Fan-in: worker %d channel closed, collected %d results", 
+                            workerIndex, collected)
+                        return
+                    }
+                    
+                    // 【スレッドセーフな結果追加】
+                    mu.Lock()
+                    results = append(results, result)
+                    collected++
+                    mu.Unlock()
+                    
+                case <-ctx.Done():
+                    log.Printf("Fan-in: worker %d cancelled", workerIndex)
+                    return
+                }
+            }
+        }(input, i)
+    }
+    
+    wg.Wait()
+    log.Printf("✅ Fan-in completed: collected %d results", len(results))
+    return results
 }
 ```
 

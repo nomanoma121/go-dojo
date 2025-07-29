@@ -91,8 +91,9 @@ Go道場60日間で学習した全ての技術（slog、Prometheus、OpenTelemet
 
 **User Service**
 ```go
+// 【プロダクション品質のUserService】60日間の学習集大成
 type UserService struct {
-    // 依存関係注入
+    // 【依存関係注入】Clean Architecture準拠
     repo         UserRepository
     cache        CacheService
     logger       *slog.Logger
@@ -100,11 +101,248 @@ type UserService struct {
     metrics      *UserMetrics
     eventBus     EventBus
     
-    // 品質保証
+    // 【品質保証機能】信頼性とスケーラビリティ
     circuitBreaker *CircuitBreaker
     rateLimiter    *RateLimiter
     validator      *Validator
+    
+    // 【高度な機能】プロダクション運用対応
+    connectionPool *sql.DB
+    healthChecker  *HealthChecker
+    configManager  *ConfigManager
+    securityManager *SecurityManager
 }
+
+// 【重要メソッド】ユーザー作成処理の完全実装
+func (s *UserService) CreateUser(ctx context.Context, req *CreateUserRequest) (*User, error) {
+    // 【STEP 1】分散トレーシング開始
+    ctx, span := s.tracer.Start(ctx, "UserService.CreateUser",
+        trace.WithSpanKind(trace.SpanKindServer),
+        trace.WithAttributes(
+            attribute.String("operation", "create_user"),
+            attribute.String("user.email", req.Email),
+        ),
+    )
+    defer span.End()
+    
+    start := time.Now()
+    requestID := GetRequestID(ctx)
+    
+    // 【STEP 2】リクエストメトリクス記録
+    s.metrics.RequestsTotal.WithLabelValues("create_user").Inc()
+    
+    // 【STEP 3】レート制限チェック
+    if !s.rateLimiter.Allow() {
+        s.metrics.RateLimitExceeded.Inc()
+        span.SetStatus(codes.Error, "rate limit exceeded")
+        
+        s.logger.WarnContext(ctx, "Rate limit exceeded for user creation",
+            slog.String("request_id", requestID),
+            slog.String("user_email", req.Email),
+        )
+        
+        return nil, NewRateLimitError("User creation rate limit exceeded")
+    }
+    
+    // 【STEP 4】包括的バリデーション
+    if err := s.validator.ValidateCreateUserRequest(req); err != nil {
+        s.metrics.ValidationErrors.Inc()
+        span.RecordError(err)
+        span.SetStatus(codes.Error, "validation failed")
+        
+        s.logger.WarnContext(ctx, "User creation validation failed",
+            slog.String("request_id", requestID),
+            slog.String("error", err.Error()),
+        )
+        
+        return nil, err
+    }
+    
+    // 【STEP 5】重複チェック（キャッシュ活用）
+    exists, err := s.checkUserExists(ctx, req.Email)
+    if err != nil {
+        s.metrics.DatabaseErrors.Inc()
+        span.RecordError(err)
+        return nil, fmt.Errorf("failed to check user existence: %w", err)
+    }
+    
+    if exists {
+        s.metrics.DuplicateUsers.Inc()
+        span.SetStatus(codes.Error, "user already exists")
+        
+        s.logger.WarnContext(ctx, "Attempted to create duplicate user",
+            slog.String("request_id", requestID),
+            slog.String("user_email", req.Email),
+        )
+        
+        return nil, NewDuplicateUserError("User with this email already exists")
+    }
+    
+    // 【STEP 6】パスワードハッシュ化（セキュリティ）
+    hashedPassword, err := s.securityManager.HashPassword(req.Password)
+    if err != nil {
+        s.metrics.SecurityErrors.Inc()
+        span.RecordError(err)
+        return nil, fmt.Errorf("failed to hash password: %w", err)
+    }
+    
+    // 【STEP 7】ユーザーエンティティ作成
+    user := &User{
+        ID:          generateUserID(),
+        Name:        req.Name,
+        Email:       req.Email,
+        Password:    hashedPassword,
+        Status:      UserStatusActive,
+        CreatedAt:   time.Now(),
+        UpdatedAt:   time.Now(),
+    }
+    
+    // 【STEP 8】データベーストランザクション
+    err = s.executeInTransaction(ctx, func(tx *sql.Tx) error {
+        // データベースに保存
+        if err := s.repo.CreateWithTx(ctx, tx, user); err != nil {
+            return fmt.Errorf("failed to create user in database: %w", err)
+        }
+        
+        // 初期プロファイル作成
+        profile := &UserProfile{
+            UserID:    user.ID,
+            CreatedAt: time.Now(),
+        }
+        
+        if err := s.repo.CreateProfileWithTx(ctx, tx, profile); err != nil {
+            return fmt.Errorf("failed to create user profile: %w", err)
+        }
+        
+        return nil
+    })
+    
+    if err != nil {
+        s.metrics.DatabaseErrors.Inc()
+        span.RecordError(err)
+        span.SetStatus(codes.Error, "database transaction failed")
+        
+        s.logger.ErrorContext(ctx, "User creation transaction failed",
+            slog.String("request_id", requestID),
+            slog.String("user_email", req.Email),
+            slog.String("error", err.Error()),
+        )
+        
+        return nil, err
+    }
+    
+    // 【STEP 9】キャッシュ更新
+    if err := s.cache.Set(ctx, s.buildUserCacheKey(user.ID), user, time.Hour); err != nil {
+        s.metrics.CacheErrors.Inc()
+        // キャッシュエラーはサービス継続性のために警告のみ
+        s.logger.WarnContext(ctx, "Failed to cache user",
+            slog.String("request_id", requestID),
+            slog.String("user_id", user.ID),
+            slog.String("error", err.Error()),
+        )
+    }
+    
+    // 【STEP 10】イベント発行（非同期処理）
+    event := &UserCreatedEvent{
+        UserID:    user.ID,
+        Email:     user.Email,
+        Name:      user.Name,
+        CreatedAt: user.CreatedAt,
+        Metadata: EventMetadata{
+            RequestID: requestID,
+            TraceID:   span.SpanContext().TraceID().String(),
+            SpanID:    span.SpanContext().SpanID().String(),
+        },
+    }
+    
+    if err := s.eventBus.PublishAsync(ctx, event); err != nil {
+        s.metrics.EventPublishingErrors.Inc()
+        // イベント発行エラーもサービス継続性のために警告のみ
+        s.logger.WarnContext(ctx, "Failed to publish user created event",
+            slog.String("request_id", requestID),
+            slog.String("user_id", user.ID),
+            slog.String("error", err.Error()),
+        )
+    }
+    
+    // 【STEP 11】成功メトリクス記録
+    duration := time.Since(start)
+    s.metrics.SuccessfulOperations.WithLabelValues("create_user").Inc()
+    s.metrics.OperationDuration.WithLabelValues("create_user").Observe(duration.Seconds())
+    
+    span.SetStatus(codes.Ok, "user created successfully")
+    span.SetAttributes(
+        attribute.String("user.id", user.ID),
+        attribute.Duration("operation.duration", duration),
+    )
+    
+    s.logger.InfoContext(ctx, "User created successfully",
+        slog.String("request_id", requestID),
+        slog.String("user_id", user.ID),
+        slog.String("user_email", user.Email),
+        slog.Duration("duration", duration),
+    )
+    
+    return user, nil
+}
+
+// 【重要メソッド】ユーザー存在チェック（キャッシュ活用）
+func (s *UserService) checkUserExists(ctx context.Context, email string) (bool, error) {
+    // キャッシュから確認
+    cacheKey := s.buildUserEmailCacheKey(email)
+    var exists bool
+    
+    if err := s.cache.Get(ctx, cacheKey, &exists); err == nil {
+        s.metrics.CacheHits.Inc()
+        return exists, nil
+    }
+    
+    // キャッシュミス：データベースから確認
+    s.metrics.CacheMisses.Inc()
+    
+    user, err := s.repo.GetByEmail(ctx, email)
+    if err != nil {
+        if errors.Is(err, sql.ErrNoRows) {
+            // 存在しない場合もキャッシュに保存
+            s.cache.Set(ctx, cacheKey, false, 10*time.Minute)
+            return false, nil
+        }
+        return false, err
+    }
+    
+    // 存在する場合もキャッシュに保存
+    s.cache.Set(ctx, cacheKey, true, 10*time.Minute)
+    return user != nil, nil
+}
+
+// 【重要メソッド】トランザクション実行（データ一貫性保証）
+func (s *UserService) executeInTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
+    tx, err := s.connectionPool.BeginTx(ctx, nil)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %w", err)
+    }
+    defer tx.Rollback()
+    
+    if err := fn(tx); err != nil {
+        return err
+    }
+    
+    if err := tx.Commit(); err != nil {
+        return fmt.Errorf("failed to commit transaction: %w", err)
+    }
+    
+    return nil
+}
+
+// 【重要メソッド】キャッシュキー生成（統一規則）
+func (s *UserService) buildUserCacheKey(userID string) string {
+    return fmt.Sprintf("user:id:%s", userID)
+}
+
+func (s *UserService) buildUserEmailCacheKey(email string) string {
+    return fmt.Sprintf("user:email:%s", email)
+}
+```
 
 type UserRepository interface {
     Create(ctx context.Context, user *User) error

@@ -16,27 +16,230 @@
 並行処理パイプラインでは、複数のステージが並列に実行され、各ステージで様々なエラーが発生する可能性があります：
 
 ```go
-// 問題のある例：エラー処理が不十分
-func processDataUnsafely(data []DataItem) {
-    input := make(chan DataItem)
+// 【エラーハンドリング付きパイプラインの重要性】本番環境での堅牢性確保
+// ❌ 問題例：エラー処理の欠如による本番システムの壊滅的障害
+func catastrophicPipelineWithoutErrorHandling(data []DataItem) {
+    input := make(chan DataItem, 1000)
     
-    // データを投入
+    // 🚨 災害例：エラー情報が完全に失われる設計
+    log.Printf("Processing %d items without error handling...", len(data))
+    
+    // データを投入（エラーチェックなし）
     go func() {
         defer close(input)
-        for _, item := range data {
+        for i, item := range data {
             input <- item
+            // ❌ データ投入時のバリデーションエラーを無視
+            // ❌ チャネルブロック時の対処なし
+            if i%1000 == 0 {
+                log.Printf("Sent %d items to pipeline", i)
+            }
         }
     }()
     
-    // 各ステージで処理
-    stage1 := processStage1(input)  // ネットワークエラー発生可能
-    stage2 := processStage2(stage1) // DB接続エラー発生可能
-    stage3 := processStage3(stage2) // ファイルI/Oエラー発生可能
+    // 【段階的処理】各ステージでエラーが蓄積される
+    // Stage 1: API呼び出し（ネットワークエラー頻発）
+    stage1 := processStage1Unsafe(input)  
+    // ❌ ネットワークタイムアウト（30%失敗率）を無視
+    // ❌ API制限エラー（429 Too Many Requests）を無視
+    // ❌ 認証エラー（401 Unauthorized）を無視
     
-    // エラーが発生してもわからない！
+    // Stage 2: データベース操作（DB接続エラー頻発）
+    stage2 := processStage2Unsafe(stage1) 
+    // ❌ コネクションプール枯渇を無視
+    // ❌ SQL構文エラーやデータ型不整合を無視
+    // ❌ トランザクションデッドロックを無視
+    
+    // Stage 3: ファイル出力（ディスク満杯エラー）
+    stage3 := processStage3Unsafe(stage2) 
+    // ❌ ディスク容量不足エラーを無視
+    // ❌ 権限エラー（Permission Denied）を無視
+    // ❌ ファイルロックエラーを無視
+    
+    // 🚨 最大の災害：エラーが発生してもわからない
+    successCount := 0
     for result := range stage3 {
         fmt.Println(result)
+        successCount++
+        // ❌ 実際は10,000件中3,000件しか成功していないのに気づかない
+        // ❌ 失敗した7,000件のデータが消失
+        // ❌ エラーの原因や発生箇所が不明
     }
+    
+    log.Printf("❌ Processing 'completed': %d results (actual failures unknown!)", successCount)
+    // 結果：データロス、顧客不満、ビジネス損失、デバッグ不可能
+}
+
+// ✅ 正解：プロダクション品質のエラーハンドリング付きパイプライン
+func robustErrorHandlingPipeline(data []DataItem) (*ProcessingReport, error) {
+    // 【初期設定】エラー追跡とメトリクス収集
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+    defer cancel()
+    
+    errorCollector := NewErrorCollector()
+    metricsCollector := NewMetricsCollector()
+    
+    log.Printf("🚀 Starting robust pipeline for %d items", len(data))
+    
+    // 【STEP 1】入力データの検証とチャネル投入
+    input, inputErrors := validateAndInjectData(ctx, data, metricsCollector)
+    
+    // 【STEP 2】段階的処理（各ステージでエラーハンドリング付き）
+    stage1Results, stage1Errors := processStage1WithRetry(ctx, input, metricsCollector)
+    stage2Results, stage2Errors := processStage2WithRecovery(ctx, stage1Results, metricsCollector)
+    finalResults, stage3Errors := processStage3WithFallback(ctx, stage2Results, metricsCollector)
+    
+    // 【STEP 3】エラー集約と分析
+    allErrors := mergeErrorChannels(ctx, inputErrors, stage1Errors, stage2Errors, stage3Errors)
+    
+    // 【STEP 4】結果とエラーの同時収集
+    var results []ProcessedItem
+    var errors []PipelineError
+    var wg sync.WaitGroup
+    
+    // 成功結果の収集
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        for result := range finalResults {
+            results = append(results, result)
+            metricsCollector.RecordSuccess(result.Stage)
+            
+            if len(results)%1000 == 0 {
+                log.Printf("✅ Collected %d successful results", len(results))
+            }
+        }
+    }()
+    
+    // エラーの収集と分類
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        for err := range allErrors {
+            errors = append(errors, err)
+            metricsCollector.RecordError(err.Stage, err.Error)
+            
+            // 【重要】エラーの詳細ログ出力
+            log.Printf("❌ Pipeline error in %s: %v (Item ID: %d, Retryable: %t)", 
+                err.Stage, err.Error, err.Data.ID, err.Retryable)
+            
+            // 【運用対応】重大エラーのアラート
+            if isCriticalError(err) {
+                sendAlertToOperations(err)
+            }
+        }
+    }()
+    
+    wg.Wait()
+    
+    // 【STEP 5】処理結果レポートの生成
+    report := &ProcessingReport{
+        TotalItems:    len(data),
+        SuccessCount:  len(results),
+        ErrorCount:    len(errors),
+        SuccessRate:   float64(len(results)) / float64(len(data)) * 100,
+        Results:       results,
+        Errors:        errors,
+        Metrics:       metricsCollector.GetSummary(),
+        ProcessingTime: time.Since(ctx.Value("start_time").(time.Time)),
+    }
+    
+    log.Printf("✅ Pipeline completed: %d success, %d errors (%.2f%% success rate)", 
+        report.SuccessCount, report.ErrorCount, report.SuccessRate)
+    
+    // 【品質チェック】許容可能な成功率の確認
+    if report.SuccessRate < 95.0 {
+        log.Printf("⚠️  Success rate %.2f%% is below threshold (95%%)", report.SuccessRate)
+        return report, fmt.Errorf("pipeline success rate %.2f%% below acceptable threshold", report.SuccessRate)
+    }
+    
+    return report, nil
+}
+
+// 【重要関数】第1ステージ：リトライ機能付きAPI呼び出し
+func processStage1WithRetry(ctx context.Context, input <-chan DataItem, metrics *MetricsCollector) (<-chan ProcessedItem, <-chan PipelineError) {
+    output := make(chan ProcessedItem, 100)
+    errors := make(chan PipelineError, 100)
+    
+    // 複数ワーカーで並行処理
+    numWorkers := 5
+    var wg sync.WaitGroup
+    
+    for i := 0; i < numWorkers; i++ {
+        wg.Add(1)
+        go func(workerID int) {
+            defer wg.Done()
+            
+            for {
+                select {
+                case item, ok := <-input:
+                    if !ok {
+                        return
+                    }
+                    
+                    // 【指数バックオフリトライ】
+                    maxRetries := 3
+                    baseDelay := 100 * time.Millisecond
+                    
+                    for attempt := 0; attempt <= maxRetries; attempt++ {
+                        result, err := callExternalAPI(ctx, item)
+                        
+                        if err == nil {
+                            // 成功時
+                            output <- ProcessedItem{
+                                DataItem:  item,
+                                Result:    result,
+                                Stage:     "stage1",
+                                WorkerID:  workerID,
+                                Attempts:  attempt + 1,
+                                Timestamp: time.Now(),
+                            }
+                            metrics.RecordLatency("stage1", time.Since(item.StartTime))
+                            break
+                        }
+                        
+                        // エラー発生時の処理
+                        if attempt == maxRetries {
+                            // 最終試行失敗
+                            errors <- PipelineError{
+                                Stage:     "stage1",
+                                Error:     err,
+                                Data:      item,
+                                Timestamp: time.Now(),
+                                Retryable: isRetryableError(err),
+                                Attempts:  attempt + 1,
+                            }
+                            break
+                        }
+                        
+                        // リトライ待機（指数バックオフ）
+                        delay := baseDelay * time.Duration(1<<attempt)
+                        log.Printf("⏳ Stage1 retry %d/%d for item %d after %v", 
+                            attempt+1, maxRetries, item.ID, delay)
+                        
+                        select {
+                        case <-time.After(delay):
+                            continue
+                        case <-ctx.Done():
+                            return
+                        }
+                    }
+                    
+                case <-ctx.Done():
+                    return
+                }
+            }
+        }(i)
+    }
+    
+    // ワーカー完了後にチャネルをクローズ
+    go func() {
+        wg.Wait()
+        close(output)
+        close(errors)
+    }()
+    
+    return output, errors
 }
 ```
 
