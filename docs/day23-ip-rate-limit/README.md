@@ -7,6 +7,612 @@ IPアドレス単位でリクエスト頻度を制限するレートリミット
 
 ### レートリミットの重要性
 
+```go
+// 【レートリミットの重要性】DDoS攻撃とリソース枯渇攻撃からの防御
+// ❌ 問題例：レートリミットなしでの壊滅的サービス障害
+func catastrophicNoRateLimit() {
+    // 🚨 災害例：レートリミットなしでDDoS攻撃により完全サービス停止
+    
+    http.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
+        // ❌ 認証試行に制限なし→ブルートフォース攻撃が可能
+        username := r.FormValue("username")
+        password := r.FormValue("password")
+        
+        // ❌ データベース照会を無制限実行
+        user, err := authenticateUser(username, password)
+        if err != nil {
+            // 毎回重いクエリが実行される
+            log.Printf("Authentication failed for %s from %s", username, r.RemoteAddr)
+            http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+            return
+        }
+        
+        // ❌ 攻撃者が自動化ツールで毎秒1000回のログイン試行
+        // → データベース接続プール枯渇
+        // → 正常ユーザーもログイン不可能
+        
+        w.WriteHeader(http.StatusOK)
+        json.NewEncoder(w).Encode(map[string]string{
+            "status": "success",
+            "token":  generateJWT(user),
+        })
+    })
+    
+    http.HandleFunc("/api/data-export", func(w http.ResponseWriter, r *http.Request) {
+        // ❌ 重いクエリへの制限なし→リソース枯渇攻撃
+        format := r.URL.Query().Get("format")
+        
+        // ❌ CPUとメモリ集約的な処理を無制限実行
+        data, err := exportAllData(format) // 100GBのデータ処理
+        if err != nil {
+            http.Error(w, "Export failed", http.StatusInternalServerError)
+            return
+        }
+        
+        // ❌ 攻撃者が同時に50個の並列エクスポート実行
+        // → CPU使用率100%、メモリ枯渇
+        // → サーバークラッシュ、全サービス停止
+        
+        w.Header().Set("Content-Type", "application/octet-stream")
+        w.Write(data)
+    })
+    
+    http.HandleFunc("/api/send-email", func(w http.ResponseWriter, r *http.Request) {
+        var req struct {
+            To      string `json:"to"`
+            Subject string `json:"subject"`
+            Body    string `json:"body"`
+        }
+        
+        json.NewDecoder(r.Body).Decode(&req)
+        
+        // ❌ メール送信に制限なし→スパム攻撃
+        err := sendEmail(req.To, req.Subject, req.Body)
+        if err != nil {
+            http.Error(w, "Email send failed", http.StatusInternalServerError)
+            return
+        }
+        
+        // ❌ 攻撃者が毎分10000通のスパムメール送信
+        // → メールサービスプロバイダーからブラックリスト登録
+        // → 正常業務メールも送信不可能
+        // → 顧客への重要通知が届かない
+        
+        w.WriteHeader(http.StatusOK)
+        json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
+    })
+    
+    // 【攻撃シナリオ】協調分散攻撃による完全サービス停止
+    // 1. ボットネット（10000台）が同時攻撃開始
+    // 2. 毎秒100万リクエストでサーバー負荷急上昇
+    // 3. データベース接続プール完全枯渇
+    // 4. メモリとCPU使用率100%継続
+    // 5. 正常ユーザー完全アクセス不可
+    // 6. 売上ゼロ、顧客離れ、事業停止
+    
+    log.Println("❌ Starting server WITHOUT rate limiting...")
+    http.ListenAndServe(":8080", nil)
+    // 結果：数分でサービス完全停止、事業継続不可能、競合他社に顧客流出
+}
+
+// ✅ 正解：エンタープライズ級レートリミットシステム
+type EnterpriseRateLimiterSystem struct {
+    // 【基本機能】
+    algorithms      map[AlgorithmType]RateLimitAlgorithm // 複数アルゴリズム対応
+    ipStorage       *DistributedIPStorage                // 分散IP管理
+    configManager   *DynamicConfigManager                // 動的設定管理
+    
+    // 【高度な制御】
+    adaptiveEngine  *AdaptiveRateEngine                  // 適応的レート調整
+    geolocationAPI  *GeolocationAPI                      // 地理的位置制御
+    behaviorAnalyzer *BehaviorAnalyzer                   // 行動パターン分析
+    
+    // 【攻撃対策】
+    ddosProtector   *DDoSProtector                       // DDoS攻撃検知・防御
+    botDetector     *BotDetector                         // ボット検知
+    vpnDetector     *VPNDetector                         // VPN/プロキシ検知
+    
+    // 【管理・監視】
+    metrics         *RateLimitMetrics                    // 詳細メトリクス
+    alertManager    *AlertManager                        // アラート管理
+    auditLogger     *AuditLogger                         // 監査ログ
+    
+    // 【性能最適化】
+    cacheLayer      *CacheLayer                          // キャッシュ層
+    loadBalancer    *LoadBalancer                        // 負荷分散
+    
+    // 【ホワイトリスト/ブラックリスト】
+    whitelistManager *WhitelistManager                   // ホワイトリスト管理
+    blacklistManager *BlacklistManager                   // ブラックリスト管理
+    graylistManager  *GraylistManager                    // グレーリスト管理
+    
+    // 【分散・冗長化】
+    redisCluster    *RedisCluster                        // Redis分散クラスター
+    nodeCoordinator *NodeCoordinator                     // ノード間協調
+    
+    mu              sync.RWMutex                         // 設定変更保護
+}
+
+// 【重要関数】エンタープライズレートリミッター初期化
+func NewEnterpriseRateLimiterSystem(config *RateLimiterConfig) *EnterpriseRateLimiterSystem {
+    system := &EnterpriseRateLimiterSystem{
+        algorithms: map[AlgorithmType]RateLimitAlgorithm{
+            TokenBucket:    NewTokenBucketAlgorithm(config.TokenBucket),
+            SlidingWindow:  NewSlidingWindowAlgorithm(config.SlidingWindow),
+            FixedWindow:    NewFixedWindowAlgorithm(config.FixedWindow),
+            LeakyBucket:    NewLeakyBucketAlgorithm(config.LeakyBucket),
+        },
+        ipStorage:        NewDistributedIPStorage(config.RedisConfig),
+        configManager:    NewDynamicConfigManager(config.ConfigSource),
+        adaptiveEngine:   NewAdaptiveRateEngine(config.AdaptiveConfig),
+        geolocationAPI:   NewGeolocationAPI(config.GeoAPIKey),
+        behaviorAnalyzer: NewBehaviorAnalyzer(),
+        ddosProtector:    NewDDoSProtector(config.DDoSConfig),
+        botDetector:      NewBotDetector(config.BotDetectionConfig),
+        vpnDetector:      NewVPNDetector(config.VPNDetectionConfig),
+        metrics:          NewRateLimitMetrics(),
+        alertManager:     NewAlertManager(config.AlertConfig),
+        auditLogger:      NewAuditLogger(config.AuditConfig),
+        cacheLayer:       NewCacheLayer(config.CacheConfig),
+        loadBalancer:     NewLoadBalancer(config.LoadBalancerConfig),
+        whitelistManager: NewWhitelistManager(config.WhitelistRules),
+        blacklistManager: NewBlacklistManager(config.BlacklistSources),
+        graylistManager:  NewGraylistManager(),
+        redisCluster:     NewRedisCluster(config.RedisClusterConfig),
+        nodeCoordinator:  NewNodeCoordinator(config.NodeConfig),
+    }
+    
+    // 【重要】バックグラウンド処理開始
+    go system.startAdaptiveAdjustment()
+    go system.startBehaviorAnalysis()
+    go system.startDDoSMonitoring()
+    go system.startGeoBasedUpdates()
+    go system.startMetricsCollection()
+    
+    log.Printf("🛡️  Enterprise rate limiter system initialized")
+    log.Printf("   Algorithms: %d types configured", len(system.algorithms))
+    log.Printf("   DDoS protection: ENABLED")
+    log.Printf("   Adaptive engine: ENABLED")
+    log.Printf("   Geographic filtering: ENABLED")
+    
+    return system
+}
+
+// 【核心メソッド】包括的レートリミットミドルウェア
+func (system *EnterpriseRateLimiterSystem) ComprehensiveRateLimitMiddleware(
+    endpointConfig *EndpointRateLimitConfig,
+) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            startTime := time.Now()
+            requestID := generateRequestID()
+            
+            // 【STEP 1】IP アドレス抽出と検証
+            clientIP, ipInfo := system.extractAndValidateIP(r)
+            
+            // 【STEP 2】ブラックリストチェック
+            if system.blacklistManager.IsBlacklisted(clientIP) {
+                system.metrics.RecordBlacklistedRequest(clientIP)
+                system.auditLogger.LogBlacklistedAccess(requestID, clientIP, r)
+                http.Error(w, "Access denied", http.StatusForbidden)
+                return
+            }
+            
+            // 【STEP 3】ホワイトリストチェック
+            if system.whitelistManager.IsWhitelisted(clientIP) {
+                system.metrics.RecordWhitelistedRequest(clientIP)
+                system.auditLogger.LogWhitelistedAccess(requestID, clientIP, r)
+                next.ServeHTTP(w, r)
+                return
+            }
+            
+            // 【STEP 4】地理的位置制限チェック
+            if !system.checkGeographicRestrictions(clientIP, ipInfo, endpointConfig) {
+                system.metrics.RecordGeoBlockedRequest(clientIP, ipInfo.Country)
+                system.auditLogger.LogGeoBlocked(requestID, clientIP, ipInfo.Country, r)
+                http.Error(w, "Geographic access restricted", http.StatusForbidden)
+                return
+            }
+            
+            // 【STEP 5】VPN/プロキシ検知
+            if endpointConfig.BlockVPN && system.vpnDetector.IsVPN(clientIP) {
+                system.metrics.RecordVPNBlockedRequest(clientIP)
+                system.auditLogger.LogVPNBlocked(requestID, clientIP, r)
+                http.Error(w, "VPN/Proxy access not allowed", http.StatusForbidden)
+                return
+            }
+            
+            // 【STEP 6】ボット検知
+            if system.botDetector.IsBot(r, ipInfo) {
+                system.metrics.RecordBotBlockedRequest(clientIP)
+                system.auditLogger.LogBotBlocked(requestID, clientIP, r)
+                
+                // CAPTCHAチャレンジ
+                if endpointConfig.RequireCAPTCHA {
+                    system.sendCAPTCHAChallenge(w, clientIP)
+                    return
+                }
+                
+                http.Error(w, "Bot access detected", http.StatusForbidden)
+                return
+            }
+            
+            // 【STEP 7】行動パターン分析
+            behaviorScore := system.behaviorAnalyzer.AnalyzeBehavior(clientIP, r)
+            if behaviorScore > endpointConfig.SuspiciousThreshold {
+                system.graylistManager.AddToGraylist(clientIP, behaviorScore)
+                system.auditLogger.LogSuspiciousBehavior(requestID, clientIP, behaviorScore, r)
+            }
+            
+            // 【STEP 8】DDoS攻撃検知
+            if system.ddosProtector.IsUnderAttack(clientIP, r) {
+                system.metrics.RecordDDoSAttack(clientIP)
+                system.alertManager.TriggerDDoSAlert(clientIP, r)
+                http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+                return
+            }
+            
+            // 【STEP 9】適応的レート制限の適用
+            adaptiveConfig := system.adaptiveEngine.GetAdaptiveConfig(clientIP, endpointConfig)
+            
+            // 【STEP 10】複数アルゴリズムによるレート制限判定
+            rateLimitResult := system.checkRateLimits(clientIP, adaptiveConfig, r)
+            
+            if !rateLimitResult.Allowed {
+                system.handleRateLimitExceeded(w, r, clientIP, rateLimitResult, requestID)
+                return
+            }
+            
+            // 【STEP 11】リクエストの実行
+            system.recordRequestExecution(clientIP, endpointConfig)
+            
+            // レスポンスヘッダー設定
+            system.setRateLimitHeaders(w, rateLimitResult)
+            
+            next.ServeHTTP(w, r)
+            
+            // 【STEP 12】完了後処理
+            system.recordRequestCompletion(clientIP, time.Since(startTime), endpointConfig)
+        })
+    }
+}
+
+// 【重要メソッド】IP アドレス抽出と検証
+func (system *EnterpriseRateLimiterSystem) extractAndValidateIP(r *http.Request) (string, *IPInfo) {
+    var clientIP string
+    
+    // 【信頼できるプロキシヘッダーの優先順位チェック】
+    trustedHeaders := []string{
+        "CF-Connecting-IP",      // Cloudflare
+        "X-Forwarded-For",       // 標準プロキシヘッダー
+        "X-Real-IP",             // nginx標準
+        "X-Client-IP",           // Apache標準
+        "X-Forwarded",           // RFC 7239
+        "Forwarded-For",         // 旧式
+        "Forwarded",             // RFC 7239
+    }
+    
+    for _, header := range trustedHeaders {
+        if value := r.Header.Get(header); value != "" {
+            // 複数IPの場合は最初のIPを使用
+            ips := strings.Split(value, ",")
+            for _, ip := range ips {
+                cleanIP := strings.TrimSpace(ip)
+                if system.isValidPublicIP(cleanIP) {
+                    clientIP = cleanIP
+                    break
+                }
+            }
+            if clientIP != "" {
+                break
+            }
+        }
+    }
+    
+    // フォールバック：RemoteAddr
+    if clientIP == "" {
+        host, _, err := net.SplitHostPort(r.RemoteAddr)
+        if err == nil {
+            clientIP = host
+        } else {
+            clientIP = r.RemoteAddr
+        }
+    }
+    
+    // IP情報の取得
+    ipInfo := system.geolocationAPI.GetIPInfo(clientIP)
+    
+    return clientIP, ipInfo
+}
+
+// 【重要メソッド】複数アルゴリズムによるレート制限チェック
+func (system *EnterpriseRateLimiterSystem) checkRateLimits(
+    clientIP string,
+    config *AdaptiveRateLimitConfig,
+    r *http.Request,
+) *RateLimitResult {
+    
+    // 【アルゴリズム別チェック】
+    results := make(map[AlgorithmType]*AlgorithmResult)
+    
+    for algType, algorithm := range system.algorithms {
+        if config.EnabledAlgorithms[algType] {
+            result := algorithm.CheckLimit(clientIP, config.Limits[algType], r)
+            results[algType] = result
+        }
+    }
+    
+    // 【複合判定】最も厳しい制限を採用
+    finalResult := &RateLimitResult{
+        Allowed:   true,
+        Algorithm: "composite",
+    }
+    
+    var minRemaining int64 = math.MaxInt64
+    var maxRetryAfter time.Duration
+    
+    for algType, result := range results {
+        if !result.Allowed {
+            finalResult.Allowed = false
+            finalResult.RejectedBy = append(finalResult.RejectedBy, algType)
+        }
+        
+        if result.Remaining < minRemaining {
+            minRemaining = result.Remaining
+            finalResult.Remaining = result.Remaining
+            finalResult.Limit = result.Limit
+            finalResult.Algorithm = string(algType)
+        }
+        
+        if result.RetryAfter > maxRetryAfter {
+            maxRetryAfter = result.RetryAfter
+            finalResult.RetryAfter = result.RetryAfter
+        }
+    }
+    
+    return finalResult
+}
+
+// 【重要メソッド】レート制限超過時の処理
+func (system *EnterpriseRateLimiterSystem) handleRateLimitExceeded(
+    w http.ResponseWriter,
+    r *http.Request,
+    clientIP string,
+    result *RateLimitResult,
+    requestID string,
+) {
+    // メトリクス記録
+    system.metrics.RecordRateLimitExceeded(clientIP, result.Algorithm)
+    
+    // 監査ログ
+    system.auditLogger.LogRateLimitExceeded(requestID, clientIP, result, r)
+    
+    // 段階的制裁措置
+    violations := system.getViolationCount(clientIP)
+    
+    switch {
+    case violations >= 100:
+        // 重度違反：長期ブラックリスト
+        system.blacklistManager.AddToBlacklist(clientIP, 24*time.Hour, "repeated_violations")
+        system.alertManager.TriggerSevereViolationAlert(clientIP, violations)
+        
+    case violations >= 20:
+        // 中度違反：一時的ブラックリスト
+        system.blacklistManager.AddToBlacklist(clientIP, 1*time.Hour, "moderate_violations")
+        
+    case violations >= 5:
+        // 軽度違反：グレーリスト
+        system.graylistManager.AddToGraylist(clientIP, violations)
+    }
+    
+    // レスポンスヘッダー設定
+    system.setRateLimitHeaders(w, result)
+    w.Header().Set("Retry-After", fmt.Sprintf("%.0f", result.RetryAfter.Seconds()))
+    
+    // JSON エラーレスポンス
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusTooManyRequests)
+    
+    errorResponse := map[string]interface{}{
+        "error":       "Rate limit exceeded",
+        "message":     fmt.Sprintf("Too many requests from IP %s", clientIP),
+        "limit":       result.Limit,
+        "remaining":   result.Remaining,
+        "retry_after": result.RetryAfter.Seconds(),
+        "algorithm":   result.Algorithm,
+        "request_id":  requestID,
+        "timestamp":   time.Now().Unix(),
+        "violated_by": result.RejectedBy,
+    }
+    
+    json.NewEncoder(w).Encode(errorResponse)
+}
+
+// 【実用例】プロダクション環境での包括的レートリミット
+func ProductionRateLimitingUsage() {
+    // 【設定】エンタープライズレートリミッター設定
+    config := &RateLimiterConfig{
+        TokenBucket: &TokenBucketConfig{
+            Capacity:    100,
+            RefillRate:  10, // 10 tokens/second
+            RefillPeriod: time.Second,
+        },
+        SlidingWindow: &SlidingWindowConfig{
+            WindowSize: time.Minute,
+            MaxRequests: 60,
+        },
+        FixedWindow: &FixedWindowConfig{
+            WindowSize: time.Minute,
+            MaxRequests: 100,
+        },
+        LeakyBucket: &LeakyBucketConfig{
+            Capacity:   50,
+            LeakRate:   5, // 5 requests/second
+            LeakPeriod: time.Second,
+        },
+        RedisConfig: &RedisConfig{
+            Addresses: []string{
+                "redis-cluster-1:6379",
+                "redis-cluster-2:6379", 
+                "redis-cluster-3:6379",
+            },
+            Password: getEnv("REDIS_PASSWORD"),
+            DB:       0,
+        },
+        AdaptiveConfig: &AdaptiveConfig{
+            Enabled:          true,
+            LearningPeriod:   24 * time.Hour,
+            AdjustmentFactor: 0.1,
+            MinLimit:         10,
+            MaxLimit:         1000,
+        },
+        GeoAPIKey: getEnv("GEOLOCATION_API_KEY"),
+        DDoSConfig: &DDoSConfig{
+            DetectionThreshold: 1000, // requests/minute
+            MitigationDuration: 10 * time.Minute,
+            AlertThreshold:     500,
+        },
+        BotDetectionConfig: &BotDetectionConfig{
+            UserAgentChecking: true,
+            BehaviorAnalysis:  true,
+            ChallengeResponse: true,
+        },
+        VPNDetectionConfig: &VPNDetectionConfig{
+            Enabled:     true,
+            DatabaseURL: getEnv("VPN_DB_URL"),
+            CacheExpiry: 1 * time.Hour,
+        },
+        WhitelistRules: []WhitelistRule{
+            {CIDR: "10.0.0.0/8", Description: "Internal network"},
+            {CIDR: "192.168.0.0/16", Description: "Private network"},
+            {CIDR: "172.16.0.0/12", Description: "Docker networks"},
+        },
+        BlacklistSources: []BlacklistSource{
+            {URL: "https://blocklist.example.com/ips.txt", UpdateInterval: time.Hour},
+            {URL: "https://tor-exit-nodes.example.com/list.txt", UpdateInterval: 30 * time.Minute},
+        },
+    }
+    
+    rateLimiter := NewEnterpriseRateLimiterSystem(config)
+    
+    // 【ルーター設定】
+    mux := http.NewServeMux()
+    
+    // 【認証エンドポイント】厳格な制限
+    authConfig := &EndpointRateLimitConfig{
+        RequestsPerMinute:    5,   // 認証は1分に5回まで
+        BurstAllowed:        2,   // バースト許可
+        BlockVPN:            true, // VPN接続ブロック
+        RequireCAPTCHA:      true, // CAPTCHA必須
+        SuspiciousThreshold: 0.8,  // 疑わしい行動の閾値
+        GeographicRestrictions: []string{"CN", "RU", "KP"}, // 特定国ブロック
+        EnabledAlgorithms: map[AlgorithmType]bool{
+            TokenBucket:   true,
+            SlidingWindow: true,
+        },
+    }
+    
+    authHandler := rateLimiter.ComprehensiveRateLimitMiddleware(authConfig)(
+        http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            // 認証処理
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(map[string]string{
+                "message": "Authentication endpoint",
+                "status":  "success",
+            })
+        }))
+    mux.Handle("/api/auth/login", authHandler)
+    
+    // 【API エンドポイント】標準制限
+    apiConfig := &EndpointRateLimitConfig{
+        RequestsPerMinute:   60,   // 1分に60回
+        BurstAllowed:       10,   // バースト許可
+        BlockVPN:           false, // VPN許可
+        RequireCAPTCHA:     false,
+        SuspiciousThreshold: 0.9,
+        EnabledAlgorithms: map[AlgorithmType]bool{
+            TokenBucket:   true,
+            FixedWindow:   true,
+        },
+    }
+    
+    apiHandler := rateLimiter.ComprehensiveRateLimitMiddleware(apiConfig)(
+        http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(map[string]interface{}{
+                "message": "API endpoint accessed",
+                "timestamp": time.Now().Unix(),
+            })
+        }))
+    mux.Handle("/api/users", apiHandler)
+    
+    // 【エクスポートエンドポイント】重い処理用制限
+    exportConfig := &EndpointRateLimitConfig{
+        RequestsPerMinute:   2,    // 1分に2回のみ
+        BurstAllowed:       1,    // バーストなし
+        BlockVPN:           true,  // VPN ブロック
+        RequireCAPTCHA:     true,  // CAPTCHA必須
+        SuspiciousThreshold: 0.5,  // 低い閾値
+        GeographicRestrictions: []string{"CN", "RU", "IR", "KP"},
+        EnabledAlgorithms: map[AlgorithmType]bool{
+            LeakyBucket:   true,
+            SlidingWindow: true,
+        },
+    }
+    
+    exportHandler := rateLimiter.ComprehensiveRateLimitMiddleware(exportConfig)(
+        http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            // 重い処理のシミュレーション
+            time.Sleep(2 * time.Second)
+            
+            w.Header().Set("Content-Type", "application/json")
+            json.NewEncoder(w).Encode(map[string]string{
+                "message": "Export completed",
+                "status":  "success",
+            })
+        }))
+    mux.Handle("/api/export", exportHandler)
+    
+    // 【管理エンドポイント】メトリクス
+    mux.HandleFunc("/admin/metrics", func(w http.ResponseWriter, r *http.Request) {
+        metrics := rateLimiter.metrics.GetDetailedMetrics()
+        
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(metrics)
+    })
+    
+    // 【ヘルスチェック】制限なし
+    mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]string{
+            "status": "healthy",
+            "timestamp": time.Now().Format(time.RFC3339),
+        })
+    })
+    
+    // 【サーバー起動】
+    server := &http.Server{
+        Addr:    ":8080",
+        Handler: mux,
+        ReadTimeout:  30 * time.Second,
+        WriteTimeout: 30 * time.Second,
+        IdleTimeout:  60 * time.Second,
+    }
+    
+    log.Printf("🚀 Enterprise rate limiting server starting on :8080")
+    log.Printf("   Rate limiting algorithms: %d configured", len(config.algorithms))
+    log.Printf("   DDoS protection: %t", config.DDoSConfig.Enabled)
+    log.Printf("   Adaptive limiting: %t", config.AdaptiveConfig.Enabled)
+    log.Printf("   Geographic filtering: ENABLED")
+    log.Printf("   Bot detection: %t", config.BotDetectionConfig.Enabled)
+    log.Printf("   VPN detection: %t", config.VPNDetectionConfig.Enabled)
+    
+    log.Fatal(server.ListenAndServe())
+}
+```
+
+### レートリミットの重要性
+
 レートリミットは、特定の時間内にクライアントが送信できるリクエストの数を制限するセキュリティ機能です。これにより以下の脅威を防ぐことができます：
 
 - **DDoS攻撃**: 大量のリクエストによるサービス妨害
