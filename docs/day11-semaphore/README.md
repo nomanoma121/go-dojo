@@ -15,38 +15,304 @@
 #### 1. リソース保護
 
 ```go
-// データベース接続プールの例
-type DBConnectionPool struct {
+// 【Semaphoreによるリソース保護】データベース接続プールの完全実装
+// ❌ 問題例：セマフォなしでのリソース枯渇災害
+func disastrousUnlimitedDBAccess() {
+    // 🚨 災害例：無制限なデータベース接続
+    for i := 0; i < 10000; i++ {
+        go func(requestID int) {
+            // ❌ 新しい接続を毎回作成
+            conn, err := sql.Open("postgres", "...")
+            if err != nil {
+                log.Printf("❌ Request %d: Connection failed: %v", requestID, err)
+                return
+            }
+            defer conn.Close()
+            
+            // ❌ 10,000個の並行接続でデータベースサーバーが崩壊
+            rows, err := conn.Query("SELECT * FROM users WHERE id = ?", requestID)
+            if err != nil {
+                log.Printf("❌ Request %d: Query failed: %v", requestID, err)
+                return
+            }
+            defer rows.Close()
+            
+            // ❌ "too many connections" エラーでサービス全体が停止
+            // ❌ データベースサーバーのメモリ枯渇
+            // ❌ 他のアプリケーションも巻き込んで影響拡大
+        }(i)
+    }
+    // 結果：データベースサーバーダウン、全サービス停止、顧客影響大
+}
+
+// ✅ 正解：プロダクション品質のセマフォ保護接続プール
+type EnterpriseDBConnectionPool struct {
+    // 【基本構成】
     connections chan *sql.DB
     maxConns    int
+    
+    // 【高度な機能】
+    activeConns   int64              // 現在のアクティブ接続数
+    totalRequests int64              // 総リクエスト数
+    waitingQueue  int64              // 待機中のリクエスト数
+    
+    // 【監視・運用】
+    metrics      *PoolMetrics
+    healthCheck  *HealthChecker
+    logger       *log.Logger
+    
+    // 【制御機能】
+    ctx          context.Context
+    cancel       context.CancelFunc
+    closeOnce    sync.Once
 }
 
-func NewDBConnectionPool(maxConns int) *DBConnectionPool {
-    pool := &DBConnectionPool{
+func NewEnterpriseDBConnectionPool(maxConns int, dbURL string) (*EnterpriseDBConnectionPool, error) {
+    ctx, cancel := context.WithCancel(context.Background())
+    
+    pool := &EnterpriseDBConnectionPool{
         connections: make(chan *sql.DB, maxConns),
         maxConns:    maxConns,
+        metrics:     NewPoolMetrics(),
+        healthCheck: NewHealthChecker(),
+        logger:      log.New(os.Stdout, "[DB-POOL] ", log.LstdFlags),
+        ctx:         ctx,
+        cancel:      cancel,
     }
     
-    // 接続を初期化
+    // 【重要】接続の事前作成とヘルスチェック
     for i := 0; i < maxConns; i++ {
-        conn, _ := sql.Open("postgres", "...")
+        conn, err := sql.Open("postgres", dbURL)
+        if err != nil {
+            pool.cancel()
+            return nil, fmt.Errorf("failed to create connection %d: %w", i, err)
+        }
+        
+        // 【接続設定の最適化】
+        conn.SetMaxOpenConns(1)           // プール管理なので1接続
+        conn.SetMaxIdleConns(1)           // アイドル接続も1
+        conn.SetConnMaxLifetime(1*time.Hour) // 1時間で接続更新
+        
+        // 【接続テスト】
+        if err := conn.PingContext(ctx); err != nil {
+            pool.cancel()
+            return nil, fmt.Errorf("connection %d ping failed: %w", i, err)
+        }
+        
         pool.connections <- conn
+        pool.logger.Printf("✅ Connection %d established", i+1)
     }
     
-    return pool
+    // 【監視開始】
+    go pool.startMetricsCollection()
+    go pool.startHealthMonitoring()
+    
+    pool.logger.Printf("🚀 Enterprise DB Pool initialized with %d connections", maxConns)
+    return pool, nil
 }
 
-func (pool *DBConnectionPool) GetConnection() (*sql.DB, error) {
+// 【重要メソッド】タイムアウト付き接続取得
+func (pool *EnterpriseDBConnectionPool) GetConnectionWithTimeout(timeout time.Duration) (*sql.DB, error) {
+    // 【メトリクス記録】
+    atomic.AddInt64(&pool.totalRequests, 1)
+    atomic.AddInt64(&pool.waitingQueue, 1)
+    defer atomic.AddInt64(&pool.waitingQueue, -1)
+    
+    start := time.Now()
+    
+    // 【タイムアウト付きセマフォ取得】
     select {
     case conn := <-pool.connections:
+        // 【成功メトリクス】
+        atomic.AddInt64(&pool.activeConns, 1)
+        waitTime := time.Since(start)
+        pool.metrics.RecordWaitTime(waitTime)
+        
+        // 【接続ヘルスチェック】
+        if err := conn.PingContext(pool.ctx); err != nil {
+            pool.logger.Printf("❌ Unhealthy connection detected, creating new one")
+            
+            // 不健全な接続を破棄し、新しい接続を作成
+            conn.Close()
+            newConn, err := pool.createNewConnection()
+            if err != nil {
+                atomic.AddInt64(&pool.activeConns, -1)
+                return nil, fmt.Errorf("failed to create replacement connection: %w", err)
+            }
+            conn = newConn
+        }
+        
+        pool.logger.Printf("✅ Connection acquired in %v (waiting: %d)", 
+            waitTime, atomic.LoadInt64(&pool.waitingQueue))
         return conn, nil
-    case <-time.After(5 * time.Second):
-        return nil, errors.New("connection timeout")
+        
+    case <-time.After(timeout):
+        // 【タイムアウトエラー】
+        pool.metrics.RecordTimeout()
+        waiting := atomic.LoadInt64(&pool.waitingQueue)
+        
+        pool.logger.Printf("⏰ Connection timeout after %v (waiting: %d, active: %d)", 
+            timeout, waiting, atomic.LoadInt64(&pool.activeConns))
+        
+        return nil, fmt.Errorf("connection acquisition timeout after %v (waiting: %d)", timeout, waiting)
+        
+    case <-pool.ctx.Done():
+        // 【プール停止】
+        return nil, errors.New("connection pool is closed")
     }
 }
 
-func (pool *DBConnectionPool) ReleaseConnection(conn *sql.DB) {
-    pool.connections <- conn
+// 【重要メソッド】接続の安全な返却
+func (pool *EnterpriseDBConnectionPool) ReleaseConnection(conn *sql.DB) {
+    if conn == nil {
+        return
+    }
+    
+    // 【接続の健全性チェック】
+    if err := conn.PingContext(pool.ctx); err != nil {
+        pool.logger.Printf("⚠️  Releasing unhealthy connection, creating replacement")
+        
+        // 不健全な接続を破棄
+        conn.Close()
+        atomic.AddInt64(&pool.activeConns, -1)
+        
+        // 新しい接続を非同期で作成
+        go func() {
+            if newConn, err := pool.createNewConnection(); err == nil {
+                select {
+                case pool.connections <- newConn:
+                    pool.logger.Printf("✅ Replacement connection created")
+                case <-pool.ctx.Done():
+                    newConn.Close()
+                }
+            } else {
+                pool.logger.Printf("❌ Failed to create replacement connection: %v", err)
+            }
+        }()
+        return
+    }
+    
+    // 【正常な接続返却】
+    select {
+    case pool.connections <- conn:
+        atomic.AddInt64(&pool.activeConns, -1)
+        pool.logger.Printf("✅ Connection released (active: %d)", 
+            atomic.LoadInt64(&pool.activeConns))
+    case <-pool.ctx.Done():
+        // プール停止中は接続を閉じる
+        conn.Close()
+        atomic.AddInt64(&pool.activeConns, -1)
+    }
+}
+
+// 【高度な機能】新しい接続の作成
+func (pool *EnterpriseDBConnectionPool) createNewConnection() (*sql.DB, error) {
+    conn, err := sql.Open("postgres", pool.getConnectionString())
+    if err != nil {
+        return nil, err
+    }
+    
+    conn.SetMaxOpenConns(1)
+    conn.SetMaxIdleConns(1)
+    conn.SetConnMaxLifetime(1*time.Hour)
+    
+    if err := conn.PingContext(pool.ctx); err != nil {
+        conn.Close()
+        return nil, err
+    }
+    
+    return conn, nil
+}
+
+// 【監視機能】メトリクス収集
+func (pool *EnterpriseDBConnectionPool) startMetricsCollection() {
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-ticker.C:
+            active := atomic.LoadInt64(&pool.activeConns)
+            waiting := atomic.LoadInt64(&pool.waitingQueue)
+            total := atomic.LoadInt64(&pool.totalRequests)
+            
+            pool.logger.Printf("📊 Pool Stats - Active: %d/%d, Waiting: %d, Total Requests: %d", 
+                active, pool.maxConns, waiting, total)
+                
+            // 【アラート条件】
+            if waiting > 10 {
+                pool.logger.Printf("⚠️  HIGH WAIT QUEUE: %d requests waiting", waiting)
+            }
+            
+            if float64(active)/float64(pool.maxConns) > 0.9 {
+                pool.logger.Printf("⚠️  HIGH POOL UTILIZATION: %.1f%%", 
+                    float64(active)/float64(pool.maxConns)*100)
+            }
+            
+        case <-pool.ctx.Done():
+            return
+        }
+    }
+}
+
+// 【実用例】プロダクション環境での使用パターン
+func ProductionDatabaseUsage() {
+    // プール初期化（本番環境設定）
+    pool, err := NewEnterpriseDBConnectionPool(25, "postgres://...")
+    if err != nil {
+        log.Fatalf("Failed to initialize DB pool: %v", err)
+    }
+    defer pool.Close()
+    
+    // 【高負荷シナリオ】1000件の並行リクエスト
+    var wg sync.WaitGroup
+    successCount := int64(0)
+    errorCount := int64(0)
+    
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        go func(requestID int) {
+            defer wg.Done()
+            
+            // 【接続取得】最大30秒待機
+            conn, err := pool.GetConnectionWithTimeout(30 * time.Second)
+            if err != nil {
+                atomic.AddInt64(&errorCount, 1)
+                log.Printf("❌ Request %d: %v", requestID, err)
+                return
+            }
+            defer pool.ReleaseConnection(conn)
+            
+            // 【データベース操作】
+            rows, err := conn.Query("SELECT id, name FROM users LIMIT 10")
+            if err != nil {
+                atomic.AddInt64(&errorCount, 1)
+                log.Printf("❌ Request %d query failed: %v", requestID, err)
+                return
+            }
+            defer rows.Close()
+            
+            // 結果処理
+            for rows.Next() {
+                var id int
+                var name string
+                rows.Scan(&id, &name)
+            }
+            
+            atomic.AddInt64(&successCount, 1)
+            if requestID%100 == 0 {
+                log.Printf("✅ Request %d completed", requestID)
+            }
+        }(i)
+    }
+    
+    wg.Wait()
+    
+    success := atomic.LoadInt64(&successCount)
+    errors := atomic.LoadInt64(&errorCount)
+    
+    log.Printf("🎯 Final Results: %d success, %d errors (%.2f%% success rate)", 
+        success, errors, float64(success)/1000*100)
 }
 ```
 
