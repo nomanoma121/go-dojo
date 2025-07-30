@@ -7,6 +7,132 @@ Cross-Origin Resource Sharing (CORS) の安全な設定を実装し、ブラウ�
 
 ### CORS の基礎知識
 
+```go
+// 【CORSの重要性】クロスオリジン攻撃防御とセキュアなリソース共有
+// ❌ 問題例：CORS設定なしでの壊滅的セキュリティホール
+func catastrophicNoCORSProtection() {
+    // 🚨 災害例：CORS制限なしで悪意あるサイトからの攻撃が可能
+    
+    http.HandleFunc("/api/user-data", func(w http.ResponseWriter, r *http.Request) {
+        // ❌ Origin検証なし→どんなサイトからでもアクセス可能
+        userID := r.Header.Get("X-User-ID")
+        
+        // ❌ 機密情報を無制限公開
+        sensitiveData := getUserSensitiveData(userID)
+        
+        // ❌ CORSヘッダーなし→ブラウザはリクエストをブロック
+        // しかし、攻撃者は直接HTTPクライアントでアクセス可能
+        json.NewEncoder(w).Encode(sensitiveData)
+        
+        // 【攻撃シナリオ】
+        // 1. 悪意のあるサイト evil.com が被害者ページに埋め込まれる
+        // 2. ユーザーが正規サイトにログイン済み（Cookieあり）
+        // 3. evil.com のJavaScriptが被害者の認証情報で機密APIにアクセス
+        // 4. 個人情報、金融データ、企業機密が漏洩
+    })
+    
+    http.HandleFunc("/api/transfer-money", func(w http.ResponseWriter, r *http.Request) {
+        var transfer struct {
+            To     string  `json:"to"`
+            Amount float64 `json:"amount"`
+        }
+        
+        json.NewDecoder(r.Body).Decode(&transfer)
+        
+        // ❌ CORS制限なし→CSRF攻撃が成功
+        userID := getUserIDFromSession(r)
+        err := transferMoney(userID, transfer.To, transfer.Amount)
+        if err != nil {
+            http.Error(w, "Transfer failed", http.StatusInternalServerError)
+            return
+        }
+        
+        // 【CSRF攻撃成功例】
+        // 1. 攻撃者が偽サイトに被害者を誘導
+        // 2. 隠しフォームで被害者の銀行口座から送金実行
+        // 3. 被害者の認証Cookie使用で送金成功
+        // 4. 全財産が攻撃者口座に移動
+        
+        json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+    })
+    
+    http.HandleFunc("/api/admin/delete-user", func(w http.ResponseWriter, r *http.Request) {
+        userID := r.URL.Query().Get("user_id")
+        
+        // ❌ 管理者機能への無制限アクセス
+        err := deleteUser(userID)
+        if err != nil {
+            http.Error(w, "Deletion failed", http.StatusInternalServerError)
+            return
+        }
+        
+        // 【管理者権限悪用】
+        // 1. 管理者が悪意サイトを閲覧
+        // 2. 隠しスクリプトが全ユーザー削除APIを実行
+        // 3. 数秒で全顧客データが消失
+        // 4. 事業継続不可能
+        
+        json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+    })
+    
+    // 【災害結果】
+    // 1. 顧客の個人情報・金融情報大量漏洩
+    // 2. 不正送金による金銭被害
+    // 3. データ削除による事業停止
+    // 4. 法的責任・賠償問題
+    // 5. 企業信用失墜・株価暴落
+    
+    log.Println("❌ Starting server WITHOUT CORS protection...")
+    http.ListenAndServe(":8080", nil)
+    // 結果：数時間でセキュリティ侵害、企業存続危機
+}
+
+// ✅ 正解：エンタープライズ級CORS保護システム
+type EnterpriseSecureCORSSystem struct {
+    // 【基本CORS設定】
+    allowedOrigins   []string                    // 許可オリジンリスト
+    allowedMethods   []string                    // 許可HTTPメソッド
+    allowedHeaders   []string                    // 許可ヘッダー
+    exposedHeaders   []string                    // 公開ヘッダー
+    
+    // 【高度な制御】
+    originValidator  *OriginValidator            // オリジン検証エンジン
+    methodWhitelist  *MethodWhitelist            // メソッド制限
+    headerSanitizer  *HeaderSanitizer            // ヘッダーサニタイズ
+    
+    // 【セキュリティ強化】
+    csrfProtector    *CSRFProtector              // CSRF攻撃防御
+    rateLimiter      *CORSRateLimiter            // CORS制限
+    threatDetector   *ThreatDetector             // 脅威検知
+    
+    // 【認証統合】
+    authValidator    *AuthValidator              // 認証検証
+    sessionManager   *SessionManager             // セッション管理
+    tokenValidator   *TokenValidator             // トークン検証
+    
+    // 【監視・ログ】
+    accessLogger     *AccessLogger               // アクセスログ
+    auditLogger      *AuditLogger                // 監査ログ
+    securityMonitor  *SecurityMonitor           // セキュリティ監視
+    
+    // 【動的制御】
+    dynamicRules     *DynamicRuleEngine          // 動的ルール
+    geoRestriction   *GeoRestriction             // 地理的制限
+    timeRestriction  *TimeRestriction            // 時間制限
+    
+    // 【パフォーマンス】
+    cacheManager     *CORSCacheManager           // キャッシュ管理
+    prefetchManager  *PrefetchManager            // プリフェッチ
+    
+    // 【障害回復】
+    failoverHandler  *FailoverHandler            // フェイルオーバー
+    backupRules      *BackupRules                // バックアップルール
+    
+    config           *SecureCORSConfig           // 設定管理
+    mu               sync.RWMutex                // 安全な設定変更
+}
+```
+
 CORS（Cross-Origin Resource Sharing）は、Webブラウザが実装するセキュリティ機能で、異なるオリジン（ドメイン、プロトコル、ポート）間でのリソース共有を制御します。
 
 #### Same-Origin Policy
@@ -20,26 +146,250 @@ fetch('https://api.other-domain.com/data') // ブロックされる
 
 #### CORS ヘッダーによる許可
 
-サーバーは適切なCORSヘッダーを送信することで、特定のクロスオリジンリクエストを許可できます：
-
 ```go
-func corsHandler(w http.ResponseWriter, r *http.Request) {
-    // 特定のオリジンを許可
-    w.Header().Set("Access-Control-Allow-Origin", "https://trusted-domain.com")
+// 【エンタープライズCORS実装の核心】包括的セキュリティ検証とヘッダー設定
+func (cors *EnterpriseSecureCORSSystem) ComprehensiveCORSHandler(w http.ResponseWriter, r *http.Request) {
+    requestID := getRequestID(r.Context())
+    clientIP := getClientIP(r)
+    origin := r.Header.Get("Origin")
     
-    // 許可するHTTPメソッド
-    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+    // 【STEP 1】Origin検証（最重要セキュリティチェック）
+    if !cors.validateOriginSecurely(origin, r) {
+        cors.securityMonitor.LogSuspiciousOrigin(origin, clientIP, requestID)
+        cors.auditLogger.LogSecurityViolation("invalid_origin", origin, clientIP)
+        
+        // 攻撃者に情報を与えない
+        http.Error(w, "Access Denied", http.StatusForbidden)
+        return
+    }
     
-    // 許可するヘッダー
-    w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    // 【STEP 2】メソッド検証
+    if !cors.isMethodAllowed(r.Method, origin) {
+        cors.auditLogger.LogSecurityViolation("invalid_method", r.Method, clientIP)
+        w.Header().Set("Allow", strings.Join(cors.getAllowedMethods(origin), ", "))
+        http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+        return
+    }
     
-    // 認証情報の送信を許可
-    w.Header().Set("Access-Control-Allow-Credentials", "true")
+    // 【STEP 3】ヘッダー検証とサニタイズ
+    requestedHeaders := r.Header.Get("Access-Control-Request-Headers")
+    if requestedHeaders != "" {
+        if !cors.validateRequestedHeaders(requestedHeaders, origin) {
+            cors.auditLogger.LogSecurityViolation("invalid_headers", requestedHeaders, clientIP)
+            http.Error(w, "Invalid Headers", http.StatusBadRequest)
+            return
+        }
+    }
     
-    // プリフライトキャッシュ時間
-    w.Header().Set("Access-Control-Max-Age", "3600")
+    // 【STEP 4】レート制限チェック
+    if !cors.rateLimiter.AllowRequest(clientIP, origin) {
+        cors.securityMonitor.LogRateLimitExceeded(clientIP, origin)
+        http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+        return
+    }
+    
+    // 【STEP 5】セキュアなCORSヘッダー設定
+    cors.setSecureCORSHeaders(w, origin, r)
+    
+    // 【STEP 6】アクセスログ記録
+    cors.accessLogger.LogCORSAccess(origin, r.Method, r.URL.Path, clientIP, requestID)
+}
+
+// 【重要メソッド】セキュアなOrigin検証
+func (cors *EnterpriseSecureCORSSystem) validateOriginSecurely(origin string, r *http.Request) bool {
+    if origin == "" {
+        // Same-Origin リクエストは許可
+        return true
+    }
+    
+    // 【基本検証】許可リスト確認
+    if !cors.originValidator.IsOriginAllowed(origin) {
+        return false
+    }
+    
+    // 【高度検証】地理的制限
+    if cors.geoRestriction != nil {
+        clientIP := getClientIP(r)
+        if !cors.geoRestriction.IsLocationAllowed(clientIP, origin) {
+            return false
+        }
+    }
+    
+    // 【時間制限】営業時間制限
+    if cors.timeRestriction != nil {
+        if !cors.timeRestriction.IsTimeAllowed(origin) {
+            return false
+        }
+    }
+    
+    // 【脅威検知】不審なアクセスパターン検出
+    if cors.threatDetector.IsSuspiciousOrigin(origin, r) {
+        return false
+    }
+    
+    return true
+}
+
+// 【核心メソッド】セキュアなCORSヘッダー設定
+func (cors *EnterpriseSecureCORSSystem) setSecureCORSHeaders(w http.ResponseWriter, origin string, r *http.Request) {
+    // 【重要】Origin明示的指定（ワイルドカード禁止）
+    if origin != "" {
+        w.Header().Set("Access-Control-Allow-Origin", origin)
+        // キャッシュポイズニング防止
+        w.Header().Set("Vary", "Origin")
+    }
+    
+    // 【メソッド制限】オリジン別許可メソッド
+    allowedMethods := cors.getAllowedMethods(origin)
+    w.Header().Set("Access-Control-Allow-Methods", strings.Join(allowedMethods, ", "))
+    
+    // 【ヘッダー制限】サニタイズ済みヘッダー
+    allowedHeaders := cors.getSanitizedHeaders(origin)
+    w.Header().Set("Access-Control-Allow-Headers", strings.Join(allowedHeaders, ", "))
+    
+    // 【公開ヘッダー】必要最小限
+    if len(cors.exposedHeaders) > 0 {
+        w.Header().Set("Access-Control-Expose-Headers", strings.Join(cors.exposedHeaders, ", "))
+    }
+    
+    // 【認証情報制御】細かな制御
+    if cors.shouldAllowCredentials(origin, r) {
+        w.Header().Set("Access-Control-Allow-Credentials", "true")
+    }
+    
+    // 【プリフライトキャッシュ】適切な期間設定
+    maxAge := cors.getOptimalMaxAge(origin)
+    w.Header().Set("Access-Control-Max-Age", strconv.Itoa(maxAge))
+    
+    // 【セキュリティヘッダー追加】
+    w.Header().Set("X-Content-Type-Options", "nosniff")
+    w.Header().Set("X-Frame-Options", "DENY")
+    w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+}
+
+// 【実用例】プロダクション環境でのセキュアCORS運用
+func ProductionSecureCORSUsage() {
+    // 【設定】エンタープライズCORS設定
+    corsConfig := &SecureCORSConfig{
+        // 本番環境：厳格なオリジン制限
+        AllowedOrigins: []string{
+            "https://app.company.com",
+            "https://admin.company.com", 
+            "https://*.trusted-partner.com", // サブドメイン許可
+        },
+        
+        // セキュアなメソッド制限
+        AllowedMethods: []string{
+            http.MethodGet,
+            http.MethodPost,
+            http.MethodPut,
+            http.MethodDelete,
+            http.MethodOptions, // プリフライト用
+        },
+        
+        // 最小限ヘッダー許可
+        AllowedHeaders: []string{
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With",
+            "X-API-Key",
+            "X-Client-Version",
+        },
+        
+        // レスポンスヘッダー公開制限
+        ExposedHeaders: []string{
+            "X-Rate-Limit-Remaining",
+            "X-Request-ID",
+        },
+        
+        // 認証情報許可（厳格制御）
+        AllowCredentials: true,
+        
+        // プリフライトキャッシュ最適化
+        MaxAge: 3600, // 1時間
+        
+        // セキュリティ機能有効化
+        EnableGeoRestriction:  true,
+        EnableTimeRestriction: false, // 24時間サービス
+        EnableThreatDetection: true,
+        EnableRateLimit:      true,
+        
+        // 監視設定
+        EnableAccessLog: true,
+        EnableAuditLog:  true,
+        EnableMetrics:   true,
+    }
+    
+    corsSystem := NewEnterpriseSecureCORSSystem(corsConfig)
+    
+    // 【ルーター設定】
+    mux := http.NewServeMux()
+    
+    // 【公開API】基本CORS適用
+    mux.HandleFunc("/api/public/status", func(w http.ResponseWriter, r *http.Request) {
+        corsSystem.ComprehensiveCORSHandler(w, r)
+        
+        if r.Method == http.MethodOptions {
+            return // プリフライト完了
+        }
+        
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]string{
+            "status": "ok",
+            "timestamp": time.Now().Format(time.RFC3339),
+        })
+    })
+    
+    // 【認証必須API】厳格CORS適用
+    mux.HandleFunc("/api/user/profile", func(w http.ResponseWriter, r *http.Request) {
+        corsSystem.ComprehensiveCORSHandler(w, r)
+        
+        if r.Method == http.MethodOptions {
+            return
+        }
+        
+        // 認証チェック
+        if !corsSystem.authValidator.ValidateToken(r) {
+            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            return
+        }
+        
+        userProfile := getUserProfile(r)
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(userProfile)
+    })
+    
+    // 【管理者API】最高レベルCORS保護
+    mux.HandleFunc("/api/admin/users", func(w http.ResponseWriter, r *http.Request) {
+        // 管理者専用CORS設定適用
+        corsSystem.ApplyAdminCORS(w, r)
+        
+        if r.Method == http.MethodOptions {
+            return
+        }
+        
+        // 管理者権限チェック
+        if !corsSystem.authValidator.ValidateAdminToken(r) {
+            http.Error(w, "Forbidden", http.StatusForbidden)
+            return
+        }
+        
+        users := getAllUsers()
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(users)
+    })
+    
+    log.Printf("🔒 Enterprise CORS protection server starting on :8080")
+    log.Printf("   Origin validation: ENABLED")
+    log.Printf("   Geo restriction: %t", corsConfig.EnableGeoRestriction)
+    log.Printf("   Threat detection: %t", corsConfig.EnableThreatDetection)
+    log.Printf("   Rate limiting: %t", corsConfig.EnableRateLimit)
+    
+    log.Fatal(http.ListenAndServe(":8080", mux))
 }
 ```
+
+サーバーは適切なCORSヘッダーを送信することで、特定のクロスオリジンリクエストを許可できます：
 
 ### CORS のリクエストタイプ
 
