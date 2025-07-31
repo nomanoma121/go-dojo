@@ -10,6 +10,92 @@
 
 冪等性（Idempotency）とは、同じ操作を何回実行しても結果が変わらない性質のことです。メッセージングシステムでは、ネットワーク障害や再試行により同じメッセージが複数回配信される可能性があります。
 
+```go
+// 【冪等性の重要性】分散メッセージング処理システムの基幹要件
+// ❌ 問題例：冪等性なしによる壊滅的重複処理
+func catastrophicNonIdempotentProcessing() {
+    // 🚨 災害例：同じ注文メッセージを複数回処理
+    
+    orderProcessor := &OrderProcessor{
+        db: database.New(),
+    }
+    
+    // 【災害シナリオ】ネットワーク不安定によるメッセージ重複配信
+    orderMessage := &Message{
+        ID:       "order-12345",
+        Type:     "create_order",
+        UserID:   "user-789",
+        Amount:   100000, // 10万円の注文
+        PaymentMethod: "credit_card",
+    }
+    
+    // ❌ 冪等性制御なしでメッセージを処理
+    // 1回目：正常処理（注文作成 + 決済）
+    if err := orderProcessor.ProcessOrder(orderMessage); err != nil {
+        log.Printf("Order processing failed: %v", err)
+    }
+    
+    // 【致命的問題】アクノリッジメント失敗により同じメッセージが再配信
+    // 2回目：重複処理（同じ注文を再度作成 + 二重決済）
+    if err := orderProcessor.ProcessOrder(orderMessage); err != nil {
+        log.Printf("Order processing failed: %v", err)
+    }
+    
+    // 3回目：さらなる重複処理（三重決済）
+    if err := orderProcessor.ProcessOrder(orderMessage); err != nil {
+        log.Printf("Order processing failed: %v", err)
+    }
+    
+    // 【実際の災害結果】：
+    // - 同一注文が3回作成される
+    // - 顧客のクレジットカードから30万円が引き落とし
+    // - 在庫が過剰に減算（在庫管理システム破綻）
+    // - 顧客からのクレーム殺到（不正請求として報告）
+    // - 金融機関からの調査、システム停止命令
+    // - 損害賠償訴訟、信頼失墜
+    //
+    // 【具体的被害例】：
+    // - 影響顧客数: 10,000人
+    // - 平均重複回数: 2.5回
+    // - 総損害額: 25億円の返金処理
+    // - システム復旧費用: 5億円
+    // - 法的対応費用: 3億円
+    // - ブランド価値毀損: 計り知れない
+}
+
+// ✅ 正解：エンタープライズ級冪等メッセージコンシューマーシステム
+type EnterpriseIdempotentConsumer struct {
+    // 【基本冪等性制御】
+    messageStore        *MessageStore           // メッセージ永続化ストア
+    duplicateDetector   *DuplicateDetector      // 重複検出エンジン
+    stateManager        *StateManager          // 状態管理
+    transactionManager  *TransactionManager     // トランザクション管理
+    
+    // 【高度重複制御】
+    fingerprintEngine   *FingerprintEngine     // メッセージフィンガープリント
+    bloomFilter         *BloomFilter           // 高速重複予測
+    distributedLock     *DistributedLock       // 分散ロック
+    consistencyChecker  *ConsistencyChecker    // 一貫性検証
+    
+    // 【パフォーマンス最適化】
+    cacheManager        *CacheManager          // 高速キャッシュ
+    batchProcessor      *BatchProcessor        // バッチ処理
+    asyncHandler        *AsyncHandler          // 非同期処理
+    partitionManager    *PartitionManager      // パーティション管理
+    
+    // 【障害対応・回復】
+    conflictResolver    *ConflictResolver      // 競合解決
+    rollbackHandler     *RollbackHandler       // ロールバック処理
+    reconciliation      *ReconciliationEngine  // データ整合性修復
+    auditLogger         *AuditLogger          // 監査ログ
+    
+    // 【監視・アラート】
+    metricsCollector    *MetricsCollector     // メトリクス収集
+    alertManager        *AlertManager         // アラート管理
+    healthChecker       *HealthChecker        // ヘルスチェック
+    performanceMonitor  *PerformanceMonitor   // パフォーマンス監視
+}
+
 ### メッセージの重複配信が発生する理由
 
 #### 1. ネットワーク障害

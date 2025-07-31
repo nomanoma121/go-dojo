@@ -10,6 +10,320 @@ Prometheusヒストグラムメトリクスを実装し、リクエストのレ�
 
 ヒストグラムは観測値を事前定義されたバケット（区間）に分類して、値の分布を測定するメトリクス型です。レイテンシやファイルサイズなど、値の範囲が広く分布の形状が重要な指標の監視に適しています。
 
+```go
+// 【Prometheus Histogramの重要性】パフォーマンス分析の精密化
+// ❌ 問題例：単純平均値による誤った性能評価
+func catastrophicAverageOnlyMonitoring() {
+    // 🚨 災害例：平均値のみでパフォーマンスを監視
+    
+    var totalResponseTime time.Duration
+    var requestCount int64
+    var mu sync.RWMutex
+    
+    http.HandleFunc("/api/critical", func(w http.ResponseWriter, r *http.Request) {
+        startTime := time.Now()
+        
+        // 実際のビジネスロジック
+        processCriticalRequest(r)
+        
+        responseTime := time.Since(startTime)
+        
+        // 【致命的問題】平均値のみを記録
+        mu.Lock()
+        totalResponseTime += responseTime
+        requestCount++
+        averageResponse := totalResponseTime / time.Duration(requestCount)
+        mu.Unlock()
+        
+        log.Printf("Average response time: %v", averageResponse)
+        
+        // 【問題の詳細】：
+        // 実際のレスポンス時間分布：
+        // - 90%のリクエスト: 50ms（高速）
+        // - 9%のリクエスト: 500ms（やや遅い）
+        // - 1%のリクエスト: 30秒（タイムアウト寸前）
+        //
+        // 平均値: (90×50ms + 9×500ms + 1×30000ms) / 100 = 354ms
+        //
+        // 【誤った判断】：
+        // 運用チーム: "平均354msなら許容範囲内"
+        // 実際の問題: 1%のユーザーが30秒待機（重大なUX問題）
+        //
+        // 【見落とされる問題】：
+        // - P99レイテンシが30秒（SLA違反）
+        // - 重要顧客の1%が離脱（売上への直接影響）
+        // - メディアでの炎上リスク（"サービスが使えない"）
+        // - データベースのロック競合（根本原因）
+        
+        w.WriteHeader(http.StatusOK)
+    })
+    
+    // 【災害シナリオ】：
+    // 月末処理日：バッチ処理との競合で1%のリクエストが30秒応答
+    // → 平均値は354msで"正常"判定
+    // → VIP顧客からクレーム殺到
+    // → 売上機会損失：月末セール購入を諦めたユーザー多数
+    // → 緊急対応：夜間作業でエンジニア総動員
+    
+    log.Println("Starting server with average-only monitoring (DANGEROUS!)")
+}
+
+// ✅ 正解：エンタープライズ級Histogramパフォーマンス分析システム
+type EnterpriseHistogramSystem struct {
+    // 【基本Histogram】
+    responseTimeHist     *prometheus.HistogramVec    // レスポンス時間分布
+    payloadSizeHist      *prometheus.HistogramVec    // ペイロードサイズ分布
+    dbQueryTimeHist      *prometheus.HistogramVec    // DB処理時間分布
+    externalAPITimeHist  *prometheus.HistogramVec    // 外部API時間分布
+    
+    // 【高度分析Histogram】
+    businessProcessHist  *prometheus.HistogramVec    // ビジネス処理時間
+    queueWaitTimeHist    *prometheus.HistogramVec    // キュー待機時間
+    gcPauseTimeHist      *prometheus.HistogramVec    // GC停止時間
+    networkLatencyHist   *prometheus.HistogramVec    // ネットワーク遅延
+    
+    // 【ユーザー体験Histogram】
+    pageLoadTimeHist     *prometheus.HistogramVec    // ページ読み込み時間
+    apiErrorTimeHist     *prometheus.HistogramVec    // エラー応答時間
+    timeoutBeforeHist    *prometheus.HistogramVec    // タイムアウト前の処理時間
+    
+    // 【リソース使用量Histogram】
+    memoryUsageHist      *prometheus.HistogramVec    // メモリ使用量分布
+    cpuUsageHist         *prometheus.HistogramVec    // CPU使用率分布
+    diskIOTimeHist       *prometheus.HistogramVec    // ディスクI/O時間
+    
+    // 【分析・アラート】
+    percentileCalculator *PercentileCalculator       // パーセンタイル計算
+    anomalyDetector      *HistogramAnomalyDetector   // 分布異常検知
+    trendAnalyzer        *HistogramTrendAnalyzer     // トレンド分析
+    alertManager         *HistogramAlertManager      // Histogramベースアラート
+    
+    // 【可視化・レポート】
+    heatmapGenerator     *LatencyHeatmapGenerator    // 遅延ヒートマップ
+    distributionPlotter  *DistributionPlotter       // 分布グラフ
+    reportGenerator      *PerformanceReportGenerator // パフォーマンスレポート
+}
+
+// 【包括的Histogram監視】多次元パフォーマンス分析
+func (hms *EnterpriseHistogramSystem) InstrumentWithHistogram(serviceName string, handler http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // 【監視開始】全フェーズの時間測定
+        overallStart := time.Now()
+        dbStart := time.Time{}
+        externalAPIStart := time.Time{}
+        businessLogicStart := time.Time{}
+        
+        // レスポンス情報記録用
+        recorder := &ResponseRecorder{
+            ResponseWriter: w,
+            StatusCode:     http.StatusOK,
+            BytesWritten:   0,
+        }
+        
+        // 【ビジネスコンテキスト】
+        endpoint := hms.normalizeEndpoint(r.URL.Path)
+        userSegment := hms.extractUserSegment(r)
+        region := hms.extractRegion(r)
+        
+        // 【共通ラベル】
+        commonLabels := prometheus.Labels{
+            "service":      serviceName,
+            "endpoint":     endpoint,
+            "method":       r.Method,
+            "user_segment": userSegment,
+            "region":       region,
+        }
+        
+        defer func() {
+            overallDuration := time.Since(overallStart)
+            
+            // 【全体レスポンス時間Histogram】
+            hms.responseTimeHist.With(commonLabels).Observe(overallDuration.Seconds())
+            
+            // 【ペイロードサイズHistogram】
+            if recorder.BytesWritten > 0 {
+                payloadLabels := prometheus.Labels{
+                    "service":  serviceName,
+                    "endpoint": endpoint,
+                    "type":     "response",
+                }
+                hms.payloadSizeHist.With(payloadLabels).Observe(float64(recorder.BytesWritten))
+            }
+            
+            // 【ステータスコード別レスポンス時間】
+            statusLabels := prometheus.Labels{
+                "service":     serviceName,
+                "endpoint":    endpoint,
+                "status_code": strconv.Itoa(recorder.StatusCode),
+                "status_class": hms.getStatusClass(recorder.StatusCode),
+            }
+            hms.responseTimeByStatusHist.With(statusLabels).Observe(overallDuration.Seconds())
+            
+            // 【パーセンタイル分析】
+            hms.analyzePercentiles(serviceName, endpoint, overallDuration)
+            
+            // 【異常検知】
+            hms.detectPerformanceAnomalies(serviceName, endpoint, overallDuration, recorder.StatusCode)
+            
+            // 【SLA監視】
+            hms.evaluateSLACompliance(serviceName, endpoint, overallDuration)
+        }()
+        
+        // 【実際のハンドラー実行】
+        handler.ServeHTTP(recorder, r)
+    })
+}
+
+// 【詳細パーセンタイル分析】P50, P95, P99の精密監視
+func (hms *EnterpriseHistogramSystem) analyzePercentiles(serviceName, endpoint string, duration time.Duration) {
+    // 【現在の分布統計取得】
+    distribution := hms.getRecentDistribution(serviceName, endpoint, 5*time.Minute)
+    
+    // 【パーセンタイル計算】
+    percentiles := hms.percentileCalculator.Calculate(distribution)
+    
+    // 【パフォーマンス評価】
+    performanceLabels := prometheus.Labels{
+        "service":  serviceName,
+        "endpoint": endpoint,
+    }
+    
+    // P50 (中央値) - 典型的なユーザー体験
+    hms.p50Latency.With(performanceLabels).Set(percentiles.P50.Seconds())
+    
+    // P95 - 上位5%のユーザー（重要顧客層）
+    hms.p95Latency.With(performanceLabels).Set(percentiles.P95.Seconds())
+    
+    // P99 - 最上位1%のユーザー（VIP・企業顧客）
+    hms.p99Latency.With(performanceLabels).Set(percentiles.P99.Seconds())
+    
+    // P99.9 - 極端なケース（システム限界）
+    hms.p999Latency.With(performanceLabels).Set(percentiles.P999.Seconds())
+    
+    // 【ビジネスインパクト評価】
+    if percentiles.P95.Seconds() > hms.getP95Threshold(serviceName) {
+        impact := &PerformanceImpact{
+            ServiceName:    serviceName,
+            Endpoint:       endpoint,
+            PercentileType: "P95",
+            ActualValue:    percentiles.P95,
+            ThresholdValue: hms.getP95Threshold(serviceName),
+            AffectedUsers:  hms.estimateAffectedUsers(serviceName, "P95"),
+            EstimatedLoss:  hms.calculateRevenueLoss(serviceName, percentiles.P95),
+        }
+        
+        hms.reportPerformanceImpact(impact)
+    }
+    
+    // 【長期トレンド分析】
+    hms.trendAnalyzer.UpdateTrend(serviceName, endpoint, percentiles)
+    
+    // 【容量計画データ】
+    if percentiles.P99 > hms.getCapacityPlanningThreshold(serviceName) {
+        hms.triggerCapacityPlanningAlert(serviceName, percentiles)
+    }
+}
+
+// 【高度異常検知】分布形状の変化検出
+func (hms *EnterpriseHistogramSystem) detectPerformanceAnomalies(serviceName, endpoint string, duration time.Duration, statusCode int) {
+    // 【分布形状分析】
+    currentDistribution := hms.getCurrentDistribution(serviceName, endpoint)
+    baselineDistribution := hms.getBaselineDistribution(serviceName, endpoint, 7*24*time.Hour)
+    
+    // 【統計的検定】
+    ksTest := hms.performKolmogorovSmirnovTest(currentDistribution, baselineDistribution)
+    
+    if ksTest.PValue < 0.01 { // 99%信頼度で分布が異なる
+        anomaly := &DistributionAnomaly{
+            ServiceName:        serviceName,
+            Endpoint:          endpoint,
+            AnomalyType:       "distribution_shift",
+            StatisticalTest:   "kolmogorov_smirnov",
+            PValue:           ksTest.PValue,
+            CurrentMedian:    currentDistribution.Median,
+            BaselineMedian:   baselineDistribution.Median,
+            ShiftMagnitude:   math.Abs(currentDistribution.Median - baselineDistribution.Median),
+            Timestamp:        time.Now(),
+        }
+        
+        hms.handleDistributionAnomaly(anomaly)
+    }
+    
+    // 【バイモーダル検知】2つのピークを持つ分布の検出
+    if hms.detectBimodality(currentDistribution) {
+        bimodalAnomaly := &BimodalAnomaly{
+            ServiceName:   serviceName,
+            Endpoint:     endpoint,
+            Peak1:        currentDistribution.FirstPeak,
+            Peak2:        currentDistribution.SecondPeak,
+            SeparationRatio: currentDistribution.PeakSeparation,
+            PotentialCause: hms.diagnoseBimodalityCause(serviceName, endpoint),
+        }
+        
+        hms.handleBimodalAnomaly(bimodalAnomaly)
+    }
+    
+    // 【ロングテール検知】極端に遅いリクエストの増加
+    if hms.detectLongTailIncrease(currentDistribution, baselineDistribution) {
+        longTailAnomaly := &LongTailAnomaly{
+            ServiceName:     serviceName,
+            Endpoint:       endpoint,
+            P99Increase:    currentDistribution.P99 - baselineDistribution.P99,
+            P999Increase:   currentDistribution.P999 - baselineDistribution.P999,
+            TailHeaviness:  hms.calculateTailHeaviness(currentDistribution),
+            RootCause:     hms.analyzeLongTailCause(serviceName, endpoint),
+        }
+        
+        hms.handleLongTailAnomaly(longTailAnomaly)
+    }
+}
+
+// 【SLA監視・違反対応】契約レベルでの性能保証
+func (hms *EnterpriseHistogramSystem) evaluateSLACompliance(serviceName, endpoint string, duration time.Duration) {
+    // 【顧客別SLA取得】
+    customerSLAs := hms.getCustomerSLAs(serviceName, endpoint)
+    
+    for customerID, sla := range customerSLAs {
+        // 【現在のパフォーマンス状況】
+        currentPerformance := hms.getCurrentPerformance(serviceName, endpoint, customerID, 1*time.Hour)
+        
+        compliance := &SLACompliance{
+            CustomerID:          customerID,
+            ServiceName:         serviceName,
+            Endpoint:           endpoint,
+            SLA:                sla,
+            CurrentPerformance: currentPerformance,
+            ComplianceStatus:   hms.calculateComplianceStatus(sla, currentPerformance),
+        }
+        
+        // 【SLA違反処理】
+        if compliance.ComplianceStatus == SLAStatusViolated {
+            violation := &SLAViolation{
+                CustomerID:       customerID,
+                ViolationType:    hms.classifyViolationType(sla, currentPerformance),
+                ViolationSeverity: hms.calculateViolationSeverity(sla, currentPerformance),
+                BusinessImpact:   hms.calculateBusinessImpact(customerID, violation),
+                RequiredActions:  hms.generateRequiredActions(violation),
+                EstimatedPenalty: hms.calculateSLAPenalty(customerID, violation),
+            }
+            
+            hms.handleSLAViolation(violation)
+            
+            // 【自動エスカレーション】
+            if violation.ViolationSeverity >= SeverityCritical {
+                hms.triggerEmergencyEscalation(violation)
+            }
+        }
+        
+        // 【予防的措置】SLA危険水域の検知
+        if compliance.ComplianceStatus == SLAStatusAtRisk {
+            preventiveMeasures := hms.generatePreventiveMeasures(compliance)
+            hms.executePreventiveMeasures(preventiveMeasures)
+        }
+    }
+}
+```
+
 ### ヒストグラムの構造
 
 Prometheusヒストグラムは3つのメトリクスシリーズを自動生成します：
