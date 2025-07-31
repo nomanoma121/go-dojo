@@ -14,6 +14,290 @@
 - 在庫更新の順序
 - ログエントリの順序
 
+```go
+// 【メッセージ順序保証の重要性】分散システムでの一貫性維持
+// ❌ 問題例：順序保証なしによる壊滅的データ不整合
+func catastrophicUnorderedProcessing() {
+    // 🚨 災害例：銀行取引システムでの順序無視処理
+    
+    accountID := "ACC-12345"
+    initialBalance := 1000.0
+    
+    // 【問題のシナリオ】顧客の一連の取引が並行処理される
+    transactions := []Transaction{
+        {ID: "TXN-001", Type: "deposit",    Amount: 500.0,  Timestamp: time.Now().Add(-3*time.Minute)}, // +500
+        {ID: "TXN-002", Type: "withdrawal", Amount: 800.0,  Timestamp: time.Now().Add(-2*time.Minute)}, // -800
+        {ID: "TXN-003", Type: "deposit",    Amount: 300.0,  Timestamp: time.Now().Add(-1*time.Minute)}, // +300
+        {ID: "TXN-004", Type: "withdrawal", Amount: 200.0,  Timestamp: time.Now()},                    // -200
+    }
+    
+    // 【正しい処理順序】時系列順：1000 → 1500 → 700 → 1000 → 800
+    // 最終残高：800（正常な取引すべてが実行可能）
+    
+    // 【致命的問題】並行処理で順序がランダムに
+    var wg sync.WaitGroup
+    for _, txn := range transactions {
+        wg.Add(1)
+        
+        // 【災害発生】各取引が並行実行され、順序が保証されない
+        go func(t Transaction) {
+            defer wg.Done()
+            
+            // 【レースコンディション】同時実行で残高計算が破綻
+            // 可能な実行順序パターン：
+            // パターン1: TXN-004, TXN-002, TXN-001, TXN-003
+            // パターン2: TXN-002, TXN-004, TXN-003, TXN-001
+            // → 各パターンで全く異なる最終残高
+            
+            processTransactionUnsafe(accountID, t)
+            
+            // 【実際の被害例】：
+            // - 残高不整合：顧客Aの1000円がマイナス2000円に
+            // - 二重支払い：同じ商品代金を複数回決済
+            // - 在庫過剰減算：在庫100個が-50個になる
+            // - 監査不可能：取引履歴の時系列が破綻
+            
+        }(txn)
+    }
+    
+    wg.Wait()
+    
+    // 【結果】：
+    // - 顧客の正当な取引が拒否される（顧客満足度低下）
+    // - システムの整合性が破綻（監査で発覚、法的責任）
+    // - 修復作業で莫大なコスト（全取引の手動調査・修正）
+    // - 信頼失墜（金融ライセンス剥奪の可能性）
+    
+    log.Printf("Final balance: %.2f (INCONSISTENT!)", getCurrentBalance(accountID))
+    // 実行のたびに異なる値が出力される
+}
+
+// ✅ 正解：エンタープライズ級メッセージ順序保証システム
+type EnterpriseOrderedMessageSystem struct {
+    // 【基本順序保証】
+    partitionManager    *PartitionManager       // パーティション管理
+    sequencer          *MessageSequencer       // メッセージ順序付け
+    orderValidator     *OrderValidator         // 順序検証
+    conflictResolver   *ConflictResolver       // 競合解決
+    
+    // 【高度順序制御】
+    logicalClock       *VectorClock           // ベクタークロック
+    timestampOracle    *TimestampOracle       // タイムスタンプ生成
+    causalityTracker   *CausalityTracker      // 因果関係追跡
+    dependencyGraph    *DependencyGraph       // 依存関係グラフ
+    
+    // 【パーティション戦略】
+    shardingStrategy   ShardingStrategy       // シャーディング戦略
+    rebalancer         *PartitionRebalancer   // パーティション再配分
+    consistentHashing  *ConsistentHashRing    // 一貫性ハッシュ
+    affinityManager    *AffinityManager       // パーティション親和性
+    
+    // 【パフォーマンス最適化】
+    batchProcessor     *BatchOrderProcessor   // バッチ順序処理
+    pipelineManager    *PipelineManager       // パイプライン管理
+    bufferManager      *OrderedBufferManager  // 順序付きバッファ
+    backpressure       *BackpressureController // バックプレッシャー制御
+    
+    // 【障害処理・復旧】
+    recoveryManager    *OrderRecoveryManager  // 順序復旧
+    checkpointer       *OrderCheckpointer     // 順序チェックポイント
+    replicationManager *OrderReplication      // 順序複製
+    auditLogger        *OrderAuditLogger      // 順序監査ログ
+}
+
+// 【包括的順序保証処理】企業レベルの順序制御
+func (oms *EnterpriseOrderedMessageSystem) ProcessOrderedMessage(ctx context.Context, message *OrderedMessage) error {
+    startTime := time.Now()
+    processingID := generateProcessingID()
+    
+    // 【STEP 1】メッセージ順序検証
+    orderInfo := &OrderInfo{
+        MessageID:     message.ID,
+        PartitionKey:  message.PartitionKey,
+        SequenceNum:   message.SequenceNumber,
+        Timestamp:     message.Timestamp,
+        ProcessingID:  processingID,
+        Dependencies:  message.Dependencies,
+    }
+    
+    if !oms.orderValidator.ValidateOrder(orderInfo) {
+        return oms.handleOrderViolation(message, orderInfo)
+    }
+    
+    // 【STEP 2】パーティション選択と親和性確保
+    partition := oms.partitionManager.SelectPartition(message.PartitionKey)
+    if partition.IsRebalancing() {
+        // パーティション再配分中は一時待機
+        if err := oms.waitForRebalanceCompletion(ctx, partition); err != nil {
+            return fmt.Errorf("partition rebalancing timeout: %w", err)
+        }
+    }
+    
+    // 【STEP 3】因果関係と依存関係の確認
+    if len(message.Dependencies) > 0 {
+        if err := oms.causalityTracker.WaitForDependencies(ctx, message.Dependencies); err != nil {
+            return fmt.Errorf("dependency wait failed: %w", err)
+        }
+    }
+    
+    // 【STEP 4】順序付きバッファへの格納
+    bufferSlot := oms.bufferManager.AcquireSlot(partition.ID, message.SequenceNumber)
+    defer bufferSlot.Release()
+    
+    // 【並行性制御】同一パーティション内での順序保証
+    partitionLock := oms.getPartitionOrderLock(partition.ID)
+    partitionLock.Lock()
+    defer partitionLock.Unlock()
+    
+    // 【STEP 5】順序チェックと待機
+    expectedSequence := oms.sequencer.GetExpectedSequence(partition.ID)
+    if message.SequenceNumber != expectedSequence {
+        // 【順序待機】期待される順序番号まで待機
+        log.Printf("⏳ Message %s waiting for sequence %d (current: %d)", 
+            message.ID, expectedSequence, message.SequenceNumber)
+        
+        if err := oms.waitForPrecedingMessages(ctx, partition.ID, expectedSequence, message.SequenceNumber); err != nil {
+            return fmt.Errorf("sequence wait failed: %w", err)
+        }
+    }
+    
+    // 【STEP 6】ビジネスロジック実行
+    processingResult, err := oms.executeBusinessLogic(ctx, message, partition)
+    if err != nil {
+        // 失敗時の順序状態復旧
+        oms.recoveryManager.HandleProcessingFailure(partition.ID, message.SequenceNumber, err)
+        return fmt.Errorf("business logic failed: %w", err)
+    }
+    
+    // 【STEP 7】順序状態更新
+    oms.sequencer.AdvanceSequence(partition.ID, message.SequenceNumber)
+    
+    // 【STEP 8】後続メッセージの通知
+    oms.notifyWaitingMessages(partition.ID, message.SequenceNumber+1)
+    
+    // 【STEP 9】監査ログ記録
+    auditEntry := &OrderAuditEntry{
+        MessageID:         message.ID,
+        PartitionID:       partition.ID,
+        SequenceNumber:    message.SequenceNumber,
+        ProcessingTime:    time.Since(startTime),
+        ProcessingResult:  processingResult,
+        PredecessorID:     oms.getPredecessorMessageID(partition.ID, message.SequenceNumber-1),
+        SuccessorID:       "", // 後で設定
+    }
+    
+    oms.auditLogger.LogOrderedProcessing(auditEntry)
+    
+    log.Printf("✅ Message %s processed in order (seq: %d, partition: %s)", 
+        message.ID, message.SequenceNumber, partition.ID)
+    
+    return nil
+}
+
+// 【順序違反処理】順序エラー時の詳細対応
+func (oms *EnterpriseOrderedMessageSystem) handleOrderViolation(message *OrderedMessage, orderInfo *OrderInfo) error {
+    violation := &OrderViolation{
+        MessageID:       message.ID,
+        ExpectedSeq:     orderInfo.ExpectedSequence,
+        ActualSeq:       message.SequenceNumber,
+        PartitionID:     orderInfo.PartitionID,
+        ViolationType:   oms.classifyViolation(orderInfo),
+        Timestamp:       time.Now(),
+        Severity:        oms.assessViolationSeverity(message, orderInfo),
+    }
+    
+    // 【違反タイプ別処理】
+    switch violation.ViolationType {
+    case ViolationTypeSequenceGap:
+        // 【シーケンス番号の欠落】前のメッセージが未到着
+        return oms.handleSequenceGap(message, violation)
+        
+    case ViolationTypeDuplicateSequence:
+        // 【重複シーケンス】同じ番号のメッセージが複数
+        return oms.handleDuplicateSequence(message, violation)
+        
+    case ViolationTypeOutOfOrder:
+        // 【順序逆転】後続メッセージが先に到着
+        return oms.handleOutOfOrder(message, violation)
+        
+    case ViolationTypePartitionMismatch:
+        // 【パーティション不整合】予期しないパーティション
+        return oms.handlePartitionMismatch(message, violation)
+        
+    case ViolationTypeTimestampAnomaly:
+        // 【タイムスタンプ異常】時計の狂いやネットワーク遅延
+        return oms.handleTimestampAnomaly(message, violation)
+        
+    default:
+        // 【未知の違反】新しいタイプの順序違反
+        return oms.handleUnknownViolation(message, violation)
+    }
+}
+
+// 【シーケンス欠落処理】メッセージ欠落時の対応
+func (oms *EnterpriseOrderedMessageSystem) handleSequenceGap(message *OrderedMessage, violation *OrderViolation) error {
+    log.Printf("🚨 Sequence gap detected: expected %d, got %d for partition %s", 
+        violation.ExpectedSeq, violation.ActualSeq, violation.PartitionID)
+    
+    // 【欠落検出】どのメッセージが欠落しているかを特定
+    missingSequences := make([]int64, 0)
+    for seq := violation.ExpectedSeq; seq < violation.ActualSeq; seq++ {
+        missingSequences = append(missingSequences, seq)
+    }
+    
+    // 【重要度評価】
+    impact := oms.assessGapImpact(violation.PartitionID, missingSequences)
+    
+    if impact.Severity >= ImpactSeverityCritical {
+        // 【緊急対応】クリティカルなメッセージ欠落
+        alert := &CriticalOrderAlert{
+            Type:           AlertTypeSequenceGap,
+            PartitionID:    violation.PartitionID,
+            MissingSequences: missingSequences,
+            BusinessImpact: impact,
+            RequiredActions: []string{
+                "Immediate investigation of message loss",
+                "Check producer system health",
+                "Verify network infrastructure",
+                "Consider system rollback if data corruption suspected",
+            },
+        }
+        
+        oms.sendCriticalAlert(alert)
+        
+        // 【データ整合性保護】クリティカル時は処理停止
+        if oms.config.StrictOrderingMode {
+            return fmt.Errorf("critical sequence gap detected, halting processing to prevent data corruption")
+        }
+    }
+    
+    // 【欠落回復戦略】
+    recoveryStrategy := oms.selectRecoveryStrategy(violation.PartitionID, missingSequences, impact)
+    
+    switch recoveryStrategy {
+    case RecoveryStrategyWaitAndRetry:
+        // 【待機・再試行】短時間待機してメッセージ到着を期待
+        return oms.waitForMissingMessages(violation.PartitionID, missingSequences, 30*time.Second)
+        
+    case RecoveryStrategySkipAndContinue:
+        // 【スキップ・継続】非クリティカルメッセージは欠落を許容
+        oms.logSkippedMessages(violation.PartitionID, missingSequences)
+        return oms.advanceSequenceWithGap(violation.PartitionID, violation.ActualSeq)
+        
+    case RecoveryStrategyRequestRedelivery:
+        // 【再配信要求】プロデューサーに欠落メッセージの再送要求
+        return oms.requestMessageRedelivery(violation.PartitionID, missingSequences)
+        
+    case RecoveryStrategyFailsafeMode:
+        // 【セーフモード】システム保護のため処理を一時停止
+        return oms.enterFailsafeMode(violation.PartitionID, "sequence gap detected")
+        
+    default:
+        return fmt.Errorf("unknown recovery strategy: %v", recoveryStrategy)
+    }
+}
+```
+
 ### 順序保証の実装パターン
 
 #### 1. パーティション分割による順序保証

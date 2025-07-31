@@ -10,6 +10,199 @@ Prometheusカスタムメトリクスを実装し、HTTPリクエスト数、エ
 
 Prometheusは、SoundCloudで開発されたオープンソースの監視・アラートシステムです。時系列データベースとして設計されており、マイクロサービスやクラウドネイティブなアプリケーションの監視に特化しています。
 
+```go
+// 【Prometheus Metricsの重要性】運用可視性とシステム安定性の確保
+// ❌ 問題例：メトリクス収集なしによる運用の盲点
+func catastrophicBlindSystemOperation() {
+    // 🚨 災害例：監視なしWebサーバーの運用
+    
+    // 【問題のシステム】メトリクス収集機能なし
+    server := &http.Server{
+        Addr:    ":8080",
+        Handler: http.DefaultServeMux,
+    }
+    
+    // 【致命的問題】システム状態が完全に不可視
+    http.HandleFunc("/api/orders", func(w http.ResponseWriter, r *http.Request) {
+        // 【監視不可能な処理】以下の情報が一切取得できない：
+        // 1. リクエスト数: 何件のリクエストが来ているか不明
+        // 2. レスポンス時間: ユーザー体験の品質が不明
+        // 3. エラー率: 障害の発生頻度・種類が不明
+        // 4. リソース使用率: CPU・メモリ・ディスクの使用状況不明
+        // 5. ビジネスメトリクス: 売上・注文数・ユーザー行動不明
+        
+        // 実際のビジネスロジック（完全にブラックボックス）
+        processOrder(r)
+        
+        // 【実際の災害シナリオ】：
+        // 月曜朝9時：突然のアクセス集中でレスポンス時間が10秒に
+        // → 運営チームは気づかない（監視なし）
+        // → 顧客からの苦情で初めて障害を認知（2時間後）
+        // → 原因調査に6時間（ログしかない状態）
+        // → 修正に4時間（影響範囲が不明）
+        // 
+        // 【損害の詳細】：
+        // - 顧客離脱: 2時間 × 遅延体験 = 推定70%のユーザーが離脱
+        // - 売上損失: 1時間あたり500万円 × 12時間 = 6000万円
+        // - 信頼失墜: SNSでの拡散、ブランドイメージ低下
+        // - 復旧コスト: エンジニア10人 × 12時間 = 人的コスト大
+        // - 機会損失: 競合他社へのユーザー流出
+        
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte("Order processed"))
+    })
+    
+    log.Println("Starting server without any monitoring...")
+    
+    // 【結果】：システムはブラックボックス状態で運用される
+    // - パフォーマンス劣化の早期検知不可能
+    // - 容量計画の根拠データなし
+    // - SLA遵守状況の把握不可能
+    // - 障害の予兆検知不可能
+    
+    server.ListenAndServe()
+}
+
+// ✅ 正解：エンタープライズ級Prometheus監視システム
+type EnterprisePrometheusSystem struct {
+    // 【基本メトリクス収集】
+    registry          *prometheus.Registry        // メトリクス登録管理
+    collector         *MetricsCollector          // メトリクス収集器
+    exporter          *PrometheusExporter        // Prometheus形式エクスポート
+    pusher            *PrometheusPusher          // プッシュゲートウェイ
+    
+    // 【高度メトリクス分析】
+    aggregator        *MetricsAggregator         // メトリクス集約
+    correlator        *MetricsCorrelator         // メトリクス相関分析
+    predictor         *TrendPredictor            // トレンド予測
+    anomalyDetector   *AnomalyDetector           // 異常検知
+    
+    // 【ビジネスメトリクス】
+    businessTracker   *BusinessMetricsTracker    // ビジネス指標追跡
+    sliCalculator     *SLICalculator             // SLI計算エンジン
+    sloMonitor        *SLOMonitor               // SLO監視
+    budgetManager     *ErrorBudgetManager        // エラーバジェット管理
+    
+    // 【アラート・通知】
+    alertManager      *PrometheusAlertManager    // アラート管理
+    escalationManager *AlertEscalationManager    // エスカレーション管理
+    notificationHub   *NotificationHub           // 通知ハブ
+    incidentManager   *IncidentManager           // インシデント管理
+    
+    // 【ダッシュボード・可視化】
+    dashboardManager  *GrafanaDashboardManager   // Grafanaダッシュボード
+    reportGenerator   *MetricsReportGenerator    // レポート生成
+    heatmapGenerator  *HeatmapGenerator          // ヒートマップ生成
+    topologyMapper    *ServiceTopologyMapper     // サービス依存関係マップ
+    
+    // 【運用・自動化】
+    autoScaler        *MetricsBasedAutoScaler    // メトリクス連動スケーリング
+    capacityPlanner   *CapacityPlanner          // 容量計画
+    performanceOptimizer *PerformanceOptimizer   // パフォーマンス最適化
+    costOptimizer     *CostOptimizer            // コスト最適化
+}
+
+// 【包括的メトリクス収集】企業レベルの監視システム
+func (pms *EnterprisePrometheusSystem) InstrumentHTTPHandler(serviceName string, handler http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        startTime := time.Now()
+        
+        // 【STEP 1】リクエスト開始メトリクス
+        pms.recordRequestStart(serviceName, r)
+        
+        // 【STEP 2】レスポンスライターのラップ（ステータスコード取得用）
+        recorder := &ResponseRecorder{
+            ResponseWriter: w,
+            StatusCode:     http.StatusOK,
+            BytesWritten:   0,
+        }
+        
+        // 【STEP 3】ビジネスコンテキスト情報抽出
+        businessContext := pms.extractBusinessContext(r)
+        
+        defer func() {
+            duration := time.Since(startTime)
+            
+            // 【基本HTTPメトリクス】
+            pms.recordHTTPMetrics(serviceName, r, recorder, duration)
+            
+            // 【ビジネスメトリクス】
+            pms.recordBusinessMetrics(businessContext, recorder.StatusCode, duration)
+            
+            // 【パフォーマンスメトリクス】
+            pms.recordPerformanceMetrics(serviceName, r.URL.Path, duration)
+            
+            // 【リソースメトリクス】
+            pms.recordResourceUsage(serviceName)
+            
+            // 【SLI/SLO評価】
+            pms.evaluateSLI(serviceName, recorder.StatusCode, duration)
+            
+            // 【異常検知】
+            pms.detectAnomalies(serviceName, duration, recorder.StatusCode)
+        }()
+        
+        // 【実際のハンドラー実行】
+        handler.ServeHTTP(recorder, r)
+    })
+}
+
+// 【ビジネスメトリクス追跡】売上・ユーザー行動の可視化
+func (pms *EnterprisePrometheusSystem) recordBusinessMetrics(context *BusinessContext, statusCode int, duration time.Duration) {
+    if context == nil {
+        return
+    }
+    
+    businessLabels := prometheus.Labels{
+        "user_segment":    context.UserSegment,
+        "product_category": context.ProductCategory,
+        "campaign_id":     context.CampaignID,
+        "ab_test_variant": context.ABTestVariant,
+        "device_type":     context.DeviceType,
+        "country":         context.Country,
+    }
+    
+    switch context.BusinessEvent {
+    case "order_placed":
+        // 【注文完了メトリクス】
+        pms.ordersTotal.With(businessLabels).Inc()
+        if context.OrderValue > 0 {
+            pms.orderValue.With(businessLabels).Add(context.OrderValue)
+        }
+        
+        // 【コンバージョン追跡】
+        pms.conversionsByFunnel.With(prometheus.Labels{
+            "funnel_step": "purchase",
+            "variant":     context.ABTestVariant,
+        }).Inc()
+        
+    case "user_signup":
+        // 【ユーザー登録メトリクス】
+        pms.userSignupsTotal.With(businessLabels).Inc()
+        
+        // 【獲得コスト計算用】
+        if context.AcquisitionChannel != "" {
+            pms.acquisitionsByChannel.With(prometheus.Labels{
+                "channel": context.AcquisitionChannel,
+                "cost_bucket": pms.getCostBucket(context.AcquisitionCost),
+            }).Inc()
+        }
+        
+    case "payment_processed":
+        // 【決済メトリクス】
+        if statusCode == 200 {
+            pms.paymentsSuccessTotal.With(businessLabels).Inc()
+            pms.paymentAmount.With(businessLabels).Add(context.PaymentAmount)
+        } else {
+            pms.paymentsFailedTotal.With(prometheus.Labels{
+                "failure_reason": context.PaymentFailureReason,
+                "payment_method": context.PaymentMethod,
+            }).Inc()
+        }
+    }
+}
+```
+
 #### Prometheusの特徴
 
 **Pull型アーキテクチャ**

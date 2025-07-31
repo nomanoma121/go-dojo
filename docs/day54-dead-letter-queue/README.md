@@ -10,6 +10,179 @@ Dead-Letter Queue パターンを実装し、処理に失敗したメッセー�
 
 Dead-Letter Queue（DLQ）は、正常に処理できなかったメッセージを一時的に保存するためのキューです。システムの信頼性向上と障害分析に重要な役割を果たします。
 
+```go
+// 【Dead Letter Queueの重要性】メッセージ処理システムの信頼性保証
+// ❌ 問題例：失敗メッセージによるシステム全体の停止
+func catastrophicMessageProcessing() {
+    // 🚨 災害例：Dead Letter Queueなしのメッセージ処理
+    
+    messageQueue := make(chan Message, 1000)
+    
+    // 【問題のシナリオ】不正なメッセージが混入
+    // 例：JSONパース不可能、必須フィールド欠損、外部API応答不可など
+    problemMessages := []Message{
+        {ID: "msg-001", Body: `{"invalid": json syntax`},  // 不正JSON
+        {ID: "msg-002", Body: `{"user_id": null}`},        // 必須フィールドnull
+        {ID: "msg-003", Body: `{"api_endpoint": "https://down-service.com"}`}, // 外部サービス停止
+    }
+    
+    for _, msg := range problemMessages {
+        messageQueue <- msg
+    }
+    
+    // 【致命的問題】失敗メッセージが処理をブロック
+    for {
+        msg := <-messageQueue
+        
+        // 【災害発生】処理失敗でプロセス終了
+        if err := processMessage(msg); err != nil {
+            log.Fatalf("❌ SYSTEM CRASH: Message processing failed: %v", err)
+            // 結果：1個の不正メッセージがシステム全体を停止
+            //
+            // 【損害の詳細】：
+            // 1. 正常メッセージ999個も処理不可能になる
+            // 2. ビジネス処理が完全停止（売上機会の喪失）
+            // 3. 顧客への通知・注文処理・決済処理が全て停止
+            // 4. 復旧までの間、蓄積される未処理メッセージの雪だるま効果
+            // 5. 手動でのメッセージ調査と修正が必要（運用コスト激増）
+            //
+            // 【実際の災害事例】：
+            // - ECサイト：注文処理停止 → 1時間で数千万円の売上損失
+            // - 金融システム：決済処理停止 → 業務継続計画発動
+            // - IoTシステム：センサーデータ蓄積 → ストレージ枯渇でシステム全停止
+        }
+        
+        log.Printf("Message %s processed successfully", msg.ID)
+    }
+}
+
+// ✅ 正解：エンタープライズ級Dead Letter Queueシステム
+type EnterpriseDeadLetterSystem struct {
+    // 【基本DLQ機能】
+    mainQueue         MessageQueue              // メインメッセージキュー
+    deadLetterQueue   DeadLetterQueue          // 失敗メッセージ格納
+    retryQueue        RetryQueue               // 再試行待ちメッセージ
+    poisonQueue       PoisonQueue              // 恒久的失敗メッセージ
+    
+    // 【高度な分類システム】
+    classifier        FailureClassifier        // 失敗種別分類器
+    analyzer          MessageAnalyzer          // メッセージ内容解析
+    correlator        FailureCorrelator        // 失敗パターン相関分析
+    predictor         FailurePredictor         // 失敗予測エンジン
+    
+    // 【再処理・修復機能】
+    reprocessor       MessageReprocessor       // 自動再処理エンジン
+    transformer       MessageTransformer       // メッセージ修正変換
+    validator         MessageValidator         // 再処理前検証
+    scheduler         ReprocessScheduler       // 再処理スケジューラ
+    
+    // 【監視・アラート】
+    monitor           DLQMonitor              // リアルタイム監視
+    alertManager      AlertManager            // アラート管理
+    dashboard         OperationalDashboard    // 運用ダッシュボード
+    reporter          ComplianceReporter      // コンプライアンス報告
+    
+    // 【運用・メンテナンス】
+    archiver          MessageArchiver         // 長期アーカイブ
+    purger            MessagePurger          // 期限切れメッセージ削除
+    exporter          MessageExporter        // メッセージエクスポート
+    importer          MessageImporter        // メッセージインポート
+}
+
+// 【包括的メッセージ処理】企業レベルの障害処理
+func (dlq *EnterpriseDeadLetterSystem) ProcessWithDLQ(ctx context.Context, message *Message) error {
+    startTime := time.Now()
+    processingID := generateProcessingID()
+    
+    // 【STEP 1】メッセージ事前検証
+    if validationErr := dlq.validator.ValidateMessage(message); validationErr != nil {
+        dlq.sendToDeadLetter(message, &FailureInfo{
+            Type:        FailureTypeValidation,
+            Reason:      "Pre-processing validation failed",
+            Error:       validationErr,
+            Timestamp:   startTime,
+            ProcessingID: processingID,
+            Recoverable: true,  // バリデーションエラーは修正可能
+        })
+        return fmt.Errorf("message validation failed: %w", validationErr)
+    }
+    
+    // 【STEP 2】メインビジネスロジック実行
+    processingErr := dlq.executeBusinessLogic(ctx, message)
+    
+    if processingErr == nil {
+        // 【成功】処理完了
+        dlq.recordSuccessMetrics(message, time.Since(startTime))
+        return nil
+    }
+    
+    // 【STEP 3】失敗分析と分類
+    failureInfo := dlq.classifier.ClassifyFailure(processingErr, message)
+    failureInfo.ProcessingID = processingID
+    failureInfo.Timestamp = startTime
+    failureInfo.ProcessingDuration = time.Since(startTime)
+    
+    // 【STEP 4】失敗タイプ別処理戦略
+    switch failureInfo.Type {
+    case FailureTypeTransient:
+        // 【一時的失敗】ネットワークエラー、一時的なサービス停止など
+        return dlq.handleTransientFailure(message, failureInfo)
+        
+    case FailureTypeResource:
+        // 【リソース不足】メモリ不足、接続プール枯渇など
+        return dlq.handleResourceFailure(message, failureInfo)
+        
+    case FailureTypeConfiguration:
+        // 【設定エラー】設定ミス、環境変数不正など
+        return dlq.handleConfigurationFailure(message, failureInfo)
+        
+    case FailureTypeBusinessLogic:
+        // 【ビジネスロジックエラー】データ不整合、ルール違反など
+        return dlq.handleBusinessLogicFailure(message, failureInfo)
+        
+    case FailureTypePermanent:
+        // 【恒久的失敗】データ形式不正、プログラムバグなど
+        return dlq.handlePermanentFailure(message, failureInfo)
+        
+    default:
+        // 【未知の失敗】新しいタイプの失敗
+        return dlq.handleUnknownFailure(message, failureInfo)
+    }
+}
+
+// 【ビジネスロジック失敗処理】自動修復と手動確認
+func (dlq *EnterpriseDeadLetterSystem) handleBusinessLogicFailure(message *Message, failureInfo *FailureInfo) error {
+    // 【自動修復試行】
+    if repairedMessage, repairErr := dlq.transformer.AutoRepair(message, failureInfo); repairErr == nil {
+        log.Printf("🔧 Auto-repair successful for message %s", message.ID)
+        
+        // 修復後の再処理を試行
+        if processErr := dlq.ProcessWithDLQ(context.Background(), repairedMessage); processErr == nil {
+            dlq.recordAutoRepairSuccess(message.ID)
+            return nil
+        }
+    }
+    
+    // 【手動確認待ちキュー】
+    failureInfo.RequiresManualReview = true
+    failureInfo.SuggestedActions = dlq.analyzer.SuggestActions(message, failureInfo)
+    
+    // 【運用チームにアラート】
+    alert := &OperationalAlert{
+        Severity:    AlertSeverityHigh,
+        MessageID:   message.ID,
+        FailureType: failureInfo.Type,
+        Description: fmt.Sprintf("Business logic failure requires manual review: %v", failureInfo.Error),
+        SuggestedActions: failureInfo.SuggestedActions,
+        DashboardLink:   dlq.dashboard.GetMessageURL(message.ID),
+    }
+    
+    dlq.alertManager.SendAlert(alert)
+    
+    return dlq.sendToDeadLetter(message, failureInfo)
+}
+```
+
 ### DLQの主要機能
 
 #### 1. エラー分類と処理
