@@ -68,18 +68,18 @@ Main Goroutine
 
 ```go
 type Context interface {
-    // Done returns a channel that's closed when work done on behalf of this
-    // context should be canceled.
+    // Done は、このContextに関連付けられた作業をキャンセルすべき時に
+    // クローズされるチャネルを返す
     Done() <-chan struct{}
     
-    // Err returns a non-nil error value after Done is closed.
+    // Err は Done チャネルがクローズされた後に nil 以外のエラー値を返す
     Err() error
     
-    // Deadline returns the time when work done on behalf of this context
-    // should be canceled.
+    // Deadline は、このContextに関連付けられた作業をキャンセルすべき
+    // 時刻を返す
     Deadline() (deadline time.Time, ok bool)
     
-    // Value returns the value associated with this context for key.
+    // Value は、このContextに関連付けられたキーの値を返す
     Value(key interface{}) interface{}
 }
 ```
