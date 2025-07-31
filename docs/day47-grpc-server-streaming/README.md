@@ -6,6 +6,205 @@ gRPCのサーバーサイドストリーミングを完全に理解し、実装�
 
 ## 📖 解説 (Explanation)
 
+```go
+// 【gRPCサーバーサイドストリーミングの重要性】大規模データ配信システムの中核技術
+// ❌ 問題例：不適切なサーバーストリーミング実装による壊滅的システム障害
+func serverStreamingDisasters() {
+    // 🚨 災害例：不正実装によるメモリリーク、DoS攻撃、セキュリティ侵害
+    
+    // ❌ 最悪の実装1：メモリリークを引き起こすログストリーミング
+    func BadLogStreaming(req *pb.LogRequest, stream pb.LogService_StreamLogsServer) error {
+        // ❌ 全ログを一度にメモリに読み込み - OOM確実
+        allLogs := loadAllLogsFromDatabase() // 100GB のログデータ
+        
+        // ❌ バッファリングなしで送信 - メモリ使用量爆発
+        for _, log := range allLogs {
+            logEntry := &pb.LogEntry{
+                Timestamp: log.Timestamp,
+                Message:   log.Message,
+                RawData:   log.RawData, // ❌ 生データを全て含める
+            }
+            
+            // ❌ エラーハンドリングなし - 接続切断でリークする
+            stream.Send(logEntry) // 失敗時の処理なし
+        }
+        return nil // ❌ リソースクリーンアップなし
+        
+        // 【災害的結果】
+        // - 1時間後: メモリ使用量200GB、スワップ発生
+        // - 2時間後: サーバーOOM Kill、全サービス停止
+        // - 顧客からの苦情殺到、SLA違反で損害賠償
+    }
+    
+    // ❌ 最悪の実装2：認証なしファイル配信で機密情報流出
+    func BadFileStreaming(req *pb.FileRequest, stream pb.FileService_StreamFileServer) error {
+        // ❌ 認証チェックなし - 誰でもアクセス可能
+        filePath := req.GetFilePath()
+        
+        // ❌ パストラバーサル攻撃に対する防御なし
+        // 攻撃者: "../../../etc/passwd" で機密ファイル取得可能
+        file, err := os.Open(filePath)
+        if err != nil {
+            return err
+        }
+        defer file.Close()
+        
+        // ❌ レート制限なし - 攻撃者が大量ダウンロード可能
+        buffer := make([]byte, 1024*1024) // 1MB chunks
+        for {
+            n, err := file.Read(buffer)
+            if err == io.EOF {
+                break
+            }
+            
+            chunk := &pb.FileChunk{
+                Data: buffer[:n], // ❌ 暗号化なしで機密データ送信
+            }
+            
+            // ❌ 送信エラーを無視 - データ破損の可能性
+            stream.Send(chunk)
+        }
+        
+        // 【災害的結果】
+        // - 攻撃者が全顧客データベースをダウンロード
+        // - 機密情報流出、GDPR違反で制裁金50億円
+        // - 企業の信頼失墜、株価50%下落
+    }
+    
+    // ❌ 最悪の実装3：DoS攻撃を増幅するリアルタイム通知
+    func BadNotificationStreaming(req *pb.NotificationRequest, stream pb.NotificationService_StreamNotificationsServer) error {
+        // ❌ 購読者管理なし - 無制限接続受け入れ
+        userID := req.GetUserId()
+        
+        // ❌ 通知キューに制限なし - メモリ爆発
+        notificationChan := make(chan *pb.Notification) // unbuffered!
+        
+        // ❌ ゴルーチンリークを引き起こす実装
+        go func() {
+            for notification := range globalNotificationChannel {
+                // ❌ バックプレッシャー制御なし
+                // クライアントが遅い場合、全体がブロック
+                notificationChan <- notification // デッドロック発生
+            }
+        }()
+        
+        // ❌ コンテキストキャンセルを無視
+        for notification := range notificationChan {
+            // ❌ クライアント切断を検知せず永続送信
+            stream.Send(notification) // 幽霊ストリーム生成
+        }
+        
+        // 【災害的結果】
+        // - 100万接続で各1MB通知 → 1TB メモリ使用
+        // - ゴルーチン500万個でCPU使用率100%
+        // - 全サービス応答不能、ビジネス完全停止
+    }
+    
+    // ❌ 最悪の実装4：レースコンディションだらけのメトリクス配信
+    func BadMetricsStreaming(req *pb.MetricsRequest, stream pb.MetricsService_StreamMetricsServer) error {
+        // ❌ 排他制御なしでグローバル変数操作
+        activeStreams++ // レースコンディション発生
+        
+        // ❌ 同期化なしでマップアクセス
+        metricsMap := globalMetricsMap // 複数ゴルーチンから同時アクセス
+        
+        ticker := time.NewTicker(time.Second)
+        defer ticker.Stop()
+        
+        for {
+            select {
+            case <-ticker.C:
+                // ❌ データ競合でクラッシュ確実
+                for name, value := range metricsMap { // panic: concurrent map read and map write
+                    metric := &pb.Metric{
+                        Name:  name,
+                        Value: value,
+                    }
+                    
+                    // ❌ 送信失敗時の処理なし
+                    stream.Send(metric)
+                }
+            }
+        }
+        
+        // 【災害的結果】
+        // - 5分後: panic でプロセス全体クラッシュ
+        // - 監視システム停止で障害検知不能
+        // - カスケード障害で全インフラダウン
+    }
+    
+    // 【実際の被害例】
+    // - 動画配信企業：ストリーミングバグで同時視聴者全員切断、売上99%減
+    // - 金融システム：リアルタイム取引配信障害で誤注文多発、損失100億円
+    // - 医療システム：患者監視データ流出、プライバシー侵害で集団訴訟
+    // - ECサイト：商品画像配信停止で注文不能、ブラックフライデー売上ゼロ
+    
+    fmt.Println("❌ Server-side streaming disasters caused complete business shutdown!")
+    // 結果：メモリリーク、セキュリティ侵害、DoS攻撃成功、企業倒産危機
+}
+
+// ✅ 正解：エンタープライズ級サーバーサイドストリーミングシステム
+type EnterpriseServerStreamingSystem struct {
+    // 【接続管理】
+    connectionManager    *ConnectionManager       // 接続プール管理
+    sessionManager       *SessionManager         // セッション管理
+    streamRegistry       *StreamRegistry         // アクティブストリーム登録
+    
+    // 【セキュリティ】
+    authManager          *AuthManager            // 認証・認可
+    encryptionManager    *EncryptionManager      // データ暗号化
+    auditLogger          *AuditLogger            // セキュリティ監査
+    
+    // 【パフォーマンス】
+    loadBalancer         *LoadBalancer           // 負荷分散
+    rateLimiter          *RateLimiter            // レート制限
+    backpressureManager  *BackpressureManager    // バックプレッシャー制御
+    
+    // 【リソース管理】
+    memoryManager        *MemoryManager          // メモリ使用量制御
+    bufferPool           *BufferPool             // バッファプール
+    compressionManager   *CompressionManager     // データ圧縮
+    
+    // 【監視・診断】
+    metricsCollector     *MetricsCollector       // メトリクス収集
+    healthChecker        *HealthChecker          // ヘルスチェック
+    performanceAnalyzer  *PerformanceAnalyzer    // パフォーマンス分析
+    
+    // 【障害対応】
+    circuitBreaker       *CircuitBreaker         // サーキットブレーカー
+    retryManager         *RetryManager           // リトライ管理
+    failoverManager      *FailoverManager        // フェイルオーバー
+    
+    config               *StreamingConfig        // 設定管理
+    mu                   sync.RWMutex            // 並行アクセス制御
+}
+
+// 【重要関数】エンタープライズストリーミングシステム初期化
+func NewEnterpriseServerStreamingSystem(config *StreamingConfig) *EnterpriseServerStreamingSystem {
+    return &EnterpriseServerStreamingSystem{
+        config:               config,
+        connectionManager:    NewConnectionManager(),
+        sessionManager:       NewSessionManager(),
+        streamRegistry:       NewStreamRegistry(),
+        authManager:          NewAuthManager(),
+        encryptionManager:    NewEncryptionManager(),
+        auditLogger:          NewAuditLogger(),
+        loadBalancer:         NewLoadBalancer(),
+        rateLimiter:          NewRateLimiter(),
+        backpressureManager:  NewBackpressureManager(),
+        memoryManager:        NewMemoryManager(),
+        bufferPool:           NewBufferPool(),
+        compressionManager:   NewCompressionManager(),
+        metricsCollector:     NewMetricsCollector(),
+        healthChecker:        NewHealthChecker(),
+        performanceAnalyzer:  NewPerformanceAnalyzer(),
+        circuitBreaker:       NewCircuitBreaker(),
+        retryManager:         NewRetryManager(),
+        failoverManager:      NewFailoverManager(),
+    }
+}
+```
+
 ### gRPCストリーミングの種類と特徴
 
 gRPCには4つの通信パターンがあります：

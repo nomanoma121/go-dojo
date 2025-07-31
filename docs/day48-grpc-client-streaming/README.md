@@ -6,6 +6,273 @@ gRPCのクライアントサイドストリーミングを完全に理解し、�
 
 ## 📖 解説 (Explanation)
 
+```go
+// 【gRPCクライアントサイドストリーミングの重要性】大量データアップロードシステムの核心技術
+// ❌ 問題例：不適切なクライアントストリーミング実装による壊滅的セキュリティ侵害とシステム崩壊
+func clientStreamingDisasters() {
+    // 🚨 災害例：不正実装によるDoS攻撃、データ破損、サーバー乗っ取り
+    
+    // ❌ 最悪の実装1：無制限ファイルアップロードでストレージ爆発
+    func BadFileUpload(stream pb.FileUploadService_UploadFileServer) error {
+        // ❌ ファイルサイズ制限なし - 攻撃者が1TB ファイルアップロード可能
+        var totalSize int64
+        var fileName string
+        
+        for {
+            chunk, err := stream.Recv()
+            if err == io.EOF {
+                break
+            }
+            if err != nil {
+                return err
+            }
+            
+            // ❌ ファイル名検証なし - パストラバーサル攻撃可能
+            // 攻撃者: "../../../../etc/passwd" で重要ファイル上書き
+            if fileName == "" {
+                fileName = chunk.GetFileName() // 危険！
+            }
+            
+            // ❌ サイズチェックなし - ディスク容量枯渇攻撃
+            data := chunk.GetData()
+            totalSize += int64(len(data))
+            
+            // ❌ 一時ファイル作成時のレースコンディション
+            // 攻撃者が同時アップロードで一時ファイル名を推測・操作可能
+            tempFile := "/tmp/upload_" + fileName // 予測可能な名前
+            
+            // ❌ ファイル権限設定なし - 誰でも読み書き可能
+            file, _ := os.OpenFile(tempFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+            file.Write(data) // エラーチェックなし
+            file.Close()
+        }
+        
+        // ❌ アップロード完了通知前に処理実行 - データ不整合
+        result := &pb.UploadResult{
+            Status: "SUCCESS", // 実際には失敗していても成功扱い
+        }
+        return stream.SendAndClose(result)
+        
+        // 【災害的結果】
+        // - 攻撃者が100GBファイルを1000個同時アップロード
+        // - ストレージ容量100TB枯渇、全サービス書き込み不能
+        // - 重要システムファイル上書きでサーバー完全制御奪取
+        // - データセンター緊急停止、復旧に2週間、損失50億円
+    }
+    
+    // ❌ 最悪の実装2：SQLインジェクション脆弱性のあるデータ収集
+    func BadDataCollection(stream pb.DataCollectionService_CollectDataPointsServer) error {
+        // ❌ 入力検証なし - 悪意あるデータで内部システム侵害
+        var dataPoints []*pb.DataPoint
+        
+        for {
+            dataPoint, err := stream.Recv()
+            if err == io.EOF {
+                break
+            }
+            
+            // ❌ SQLインジェクション攻撃に脆弱
+            // 攻撃者のデータ: source = "'; DROP TABLE users; --"
+            source := dataPoint.GetSource()
+            
+            // ❌ 直接SQL実行 - データベース完全破壊
+            query := fmt.Sprintf("INSERT INTO data_points (source) VALUES ('%s')", source)
+            database.Exec(query) // 全テーブル削除される！
+            
+            dataPoints = append(dataPoints, dataPoint)
+        }
+        
+        // ❌ 処理結果を偽装 - 攻撃成功を隠蔽
+        result := &pb.CollectionResult{
+            TotalProcessed:  int32(len(dataPoints)),
+            SuccessfulCount: int32(len(dataPoints)), // 全て成功と偽装
+        }
+        return stream.SendAndClose(result)
+        
+        // 【災害的結果】
+        // - 顧客データベース全テーブル削除
+        // - バックアップも同時破壊で完全復旧不能
+        // - 10年分の事業データ消失、会社倒産
+    }
+    
+    // ❌ 最悪の実装3：メモリリークとゴルーチン爆発のログ収集
+    func BadLogCollection(stream pb.DataCollectionService_CollectLogsServer) error {
+        // ❌ 無制限にログを蓄積 - メモリ使用量無限増加
+        var allLogs []*pb.LogEntry // 解放されない！
+        
+        // ❌ ゴルーチンリークを引き起こす並行処理
+        processingChan := make(chan *pb.LogEntry) // unbuffered
+        
+        // ❌ 終了しないゴルーチン
+        go func() {
+            for log := range processingChan {
+                // ❌ 重い処理でブロック - 他の処理が停止
+                time.Sleep(time.Second) // 意図的な遅延処理
+                
+                // ❌ 機密ログをそのまま標準出力 - 情報漏洩
+                fmt.Printf("Processing log: %+v\n", log) // パスワード等も出力
+                
+                // ❌ ログをグローバル変数に蓄積 - メモリリーク
+                allLogs = append(allLogs, log)
+            }
+        }()
+        
+        for {
+            logEntry, err := stream.Recv()
+            if err == io.EOF {
+                // ❌ ゴルーチンを停止せずに終了 - リーク確定
+                break
+            }
+            
+            // ❌ バックプレッシャー制御なし - チャネルブロック
+            processingChan <- logEntry // デッドロック発生
+        }
+        
+        // ❌ 統計情報を偽装
+        result := &pb.LogCollectionResult{
+            TotalReceived: 999999, // 実際の数値と異なる偽装
+            Status:       "SUCCESS",
+        }
+        return stream.SendAndClose(result)
+        
+        // 【災害的結果】
+        // - 1時間で10万ゴルーチン生成、CPU使用率100%
+        // - メモリ使用量500GB、システム応答不能
+        // - ログに含まれるパスワード・APIキーが標準出力で漏洩
+        // - セキュリティ侵害で全システム完全停止
+    }
+    
+    // ❌ 最悪の実装4：認証バイパス可能なバッチ処理
+    func BadBatchProcessing(stream pb.BatchService_ProcessBatchServer) error {
+        // ❌ 認証チェックをストリーム開始時のみ実行
+        // 長時間のストリーミング中にトークン期限切れしても検証なし
+        
+        var batchData []*pb.BatchItem
+        var processedCount int
+        
+        for {
+            item, err := stream.Recv()
+            if err == io.EOF {
+                break
+            }
+            
+            // ❌ バッチアイテムの権限チェックなし
+            // 攻撃者が他ユーザーのデータ操作要求を混入可能
+            
+            // ❌ 危険な操作も無条件実行
+            if item.GetOperation() == "DELETE_ALL_DATA" {
+                // ❌ 管理者権限チェックなし - 誰でも全データ削除可能
+                deleteAllUserData() // 全顧客データ削除！
+            }
+            
+            batchData = append(batchData, item)
+            processedCount++
+        }
+        
+        result := &pb.BatchResult{
+            ProcessedCount: int32(processedCount),
+            Status:        "COMPLETED",
+        }
+        return stream.SendAndClose(result)
+        
+        // 【災害的結果】
+        // - 一般ユーザーが管理者機能にアクセス
+        // - 全ユーザーデータ削除で数百万人の情報消失
+        // - 法的責任追及で経営陣逮捕、会社解散
+    }
+    
+    // 【実際の被害例】
+    // - クラウドストレージ企業：無制限アップロードでコスト月額1000万円に急増
+    // - 金融システム：SQLインジェクションで取引データ改ざん、信用失墜
+    // - 医療システム：患者記録一括削除で医療事故、集団訴訟に発展
+    // - ECサイト：商品データ破損で注文・決済システム完全停止、売上ゼロ
+    
+    fmt.Println("❌ Client-side streaming disasters caused complete business collapse!")
+    // 結果：セキュリティ侵害、データ破壊、システム乗っ取り、企業存続危機
+}
+
+// ✅ 正解：エンタープライズ級クライアントサイドストリーミングシステム
+type EnterpriseClientStreamingSystem struct {
+    // 【セキュリティ】
+    authManager          *AuthManager            // 認証・認可管理
+    encryptionManager    *EncryptionManager      // データ暗号化
+    inputValidator       *InputValidator         // 入力検証
+    sqlInjectionPreventer *SQLInjectionPreventer // SQLインジェクション防止
+    
+    // 【アクセス制御】
+    permissionManager    *PermissionManager      // 権限管理
+    auditLogger          *AuditLogger            // セキュリティ監査
+    accessController     *AccessController       // アクセス制御
+    
+    // 【リソース管理】
+    quotaManager         *QuotaManager           // 容量制限管理
+    rateLimiter          *RateLimiter            // レート制限
+    resourceMonitor      *ResourceMonitor        // リソース監視
+    memoryManager        *MemoryManager          // メモリ管理
+    
+    // 【データ整合性】
+    transactionManager   *TransactionManager     // トランザクション管理
+    checksumValidator    *ChecksumValidator       // チェックサム検証
+    duplicateDetector    *DuplicateDetector      // 重複検出
+    
+    // 【ストリーム管理】
+    streamRegistry       *StreamRegistry         // ストリーム登録管理
+    sessionManager       *SessionManager         // セッション管理
+    connectionPool       *ConnectionPool         // 接続プール
+    
+    // 【パフォーマンス】
+    compressionManager   *CompressionManager     // データ圧縮
+    bufferManager        *BufferManager          // バッファ管理
+    loadBalancer         *LoadBalancer           // 負荷分散
+    
+    // 【監視・診断】
+    metricsCollector     *MetricsCollector       // メトリクス収集
+    healthChecker        *HealthChecker          // ヘルスチェック
+    performanceAnalyzer  *PerformanceAnalyzer    // パフォーマンス分析
+    
+    // 【障害対応】
+    circuitBreaker       *CircuitBreaker         // サーキットブレーカー
+    retryManager         *RetryManager           // リトライ管理
+    failoverManager      *FailoverManager        // フェイルオーバー
+    
+    config               *StreamingConfig        // 設定管理
+    mu                   sync.RWMutex            // 並行アクセス制御
+}
+
+// 【重要関数】エンタープライズクライアントストリーミングシステム初期化
+func NewEnterpriseClientStreamingSystem(config *StreamingConfig) *EnterpriseClientStreamingSystem {
+    return &EnterpriseClientStreamingSystem{
+        config:                config,
+        authManager:           NewAuthManager(),
+        encryptionManager:     NewEncryptionManager(),
+        inputValidator:        NewInputValidator(),
+        sqlInjectionPreventer: NewSQLInjectionPreventer(),
+        permissionManager:     NewPermissionManager(),
+        auditLogger:           NewAuditLogger(),
+        accessController:      NewAccessController(),
+        quotaManager:          NewQuotaManager(),
+        rateLimiter:           NewRateLimiter(),
+        resourceMonitor:       NewResourceMonitor(),
+        memoryManager:         NewMemoryManager(),
+        transactionManager:    NewTransactionManager(),
+        checksumValidator:     NewChecksumValidator(),
+        duplicateDetector:     NewDuplicateDetector(),
+        streamRegistry:        NewStreamRegistry(),
+        sessionManager:        NewSessionManager(),
+        connectionPool:        NewConnectionPool(),
+        compressionManager:    NewCompressionManager(),
+        bufferManager:         NewBufferManager(),
+        loadBalancer:          NewLoadBalancer(),
+        metricsCollector:      NewMetricsCollector(),
+        healthChecker:         NewHealthChecker(),
+        performanceAnalyzer:   NewPerformanceAnalyzer(),
+        circuitBreaker:        NewCircuitBreaker(),
+        retryManager:          NewRetryManager(),
+        failoverManager:       NewFailoverManager(),
+    }
+}
+```
+
 ### クライアントサイドストリーミングとは
 
 クライアントサイドストリーミングは、クライアントが**複数のリクエストを順次送信**し、サーバーが**単一のレスポンス**を返すgRPCの通信パターンです。これにより、大量のデータを効率的にサーバーに送信できます。

@@ -6,6 +6,250 @@ gRPCのStream Interceptor（ストリームインターセプタ）を実装し�
 
 ## 📖 解説 (Explanation)
 
+```go
+// 【gRPCストリームインターセプタの重要性】エンタープライズストリーミングシステムの中核技術
+// ❌ 問題例：不適切なストリームインターセプタ実装による壊滅的セキュリティ侵害とシステム崩壊
+func streamInterceptorDisasters() {
+    // 🚨 災害例：不正実装によるメモリリーク、認証バイパス、DoS攻撃増幅
+    
+    // ❌ 最悪の実装1：メモリリークを引き起こすメトリクスインターセプタ
+    func BadStreamMetricsInterceptor() StreamServerInterceptor {
+        // ❌ グローバル変数でストリーム情報を永続保存 - メモリリーク
+        var allStreamMetrics []StreamMetric // 削除されない！
+        
+        return func(srv interface{}, ss ServerStream, info *StreamServerInfo, handler StreamHandler) error {
+            start := time.Now()
+            
+            // ❌ ストリーム全体の内容をメモリに保存
+            wrappedStream := &BadWrappedServerStream{
+                ServerStream: ss,
+                sentMessages: make([]interface{}, 0), // 無限に蓄積
+                recvMessages: make([]interface{}, 0), // 無限に蓄積
+            }
+            
+            err := handler(srv, wrappedStream)
+            
+            // ❌ 全ストリームデータを永続保存 - メモリ爆発
+            metric := StreamMetric{
+                Method:       info.FullMethod,
+                Duration:     time.Since(start),
+                SentMessages: wrappedStream.sentMessages, // 全データ保存！
+                RecvMessages: wrappedStream.recvMessages, // 全データ保存！
+                Timestamp:    time.Now(),
+            }
+            allStreamMetrics = append(allStreamMetrics, metric) // 無限増加
+            
+            return err
+        }
+        
+        // 【災害的結果】
+        // - 1日で100万ストリーム → メモリ使用量1TB
+        // - 2日後: サーバーOOM Kill、全サービス停止
+        // - 復旧に48時間、売上損失100億円
+    }
+    
+    // ❌ 最悪の実装2：認証バイパス可能なセキュリティインターセプタ
+    func BadStreamAuthInterceptor() StreamServerInterceptor {
+        return func(srv interface{}, ss ServerStream, info *StreamServerInfo, handler StreamHandler) error {
+            ctx := ss.Context()
+            
+            // ❌ 認証チェックをストリーム開始時のみ実行
+            md, _ := metadata.FromIncomingContext(ctx)
+            token := getMetadataValue(md, "authorization")
+            
+            // ❌ トークン検証なし - 偽造トークンでも通過
+            if token == "" {
+                // ❌ 認証なしでも実行許可 - セキュリティホール
+                log.Println("Warning: No auth token, but allowing access")
+            }
+            
+            // ❌ トークン期限切れを検証しない
+            // 長時間ストリーミング中にトークンが無効になっても気づかない
+            
+            // ❌ ストリーミング中の権限変更を検知しない
+            // ユーザーが途中で権限を剥奪されても継続実行
+            
+            return handler(srv, ss)
+        }
+        
+        // 【災害的結果】
+        // - 期限切れトークンで24時間継続アクセス
+        // - 元従業員が退職後も機密データにアクセス
+        // - データ漏洩で制裁金50億円、信頼失墜
+    }
+    
+    // ❌ 最悪の実装3：DoS攻撃を増幅するレート制限インターセプタ
+    func BadStreamRateLimitInterceptor() StreamServerInterceptor {
+        // ❌ 排他制御なしでマップアクセス - レースコンディション
+        activeStreams := make(map[string]int)
+        
+        return func(srv interface{}, ss ServerStream, info *StreamServerInfo, handler StreamHandler) error {
+            // ❌ クライアント識別が脆弱 - IPスプーフィング可能
+            clientIP := getClientIP(ss.Context()) // X-Forwarded-For偽装可能
+            
+            // ❌ 競合状態でカウンタが不正確
+            activeStreams[clientIP]++ // データ競合発生
+            
+            // ❌ レート制限チェックが後 - リソース消費済み
+            if activeStreams[clientIP] > 100 {
+                return fmt.Errorf("too many streams")
+            }
+            
+            // ❌ クリーンアップなし - カウンタが減らない
+            err := handler(srv, ss)
+            // activeStreams[clientIP]-- が実行されない！
+            
+            return err
+        }
+        
+        // 【災害的結果】
+        // - 攻撃者がIP偽装でレート制限回避
+        // - カウンタリークで実際より多い接続数を記録
+        // - 正常ユーザーが接続拒否、サービス利用不能
+    }
+    
+    // ❌ 最悪の実装4：機密情報を漏洩するログインターセプタ
+    func BadStreamLoggingInterceptor() StreamServerInterceptor {
+        return func(srv interface{}, ss ServerStream, info *StreamServerInfo, handler StreamHandler) error {
+            // ❌ ストリーム全体の内容をログ出力 - 機密情報大量流出
+            wrappedStream := &LoggingWrappedStream{
+                ServerStream: ss,
+                logger:       log.New(os.Stdout, "", log.LstdFlags),
+            }
+            
+            return handler(srv, wrappedStream)
+        }
+    }
+    
+    type LoggingWrappedStream struct {
+        ServerStream
+        logger *log.Logger
+    }
+    
+    func (ls *LoggingWrappedStream) SendMsg(m interface{}) error {
+        // ❌ 送信メッセージ全体をログ出力 - 個人情報流出
+        ls.logger.Printf("SEND: %+v", m) // パスワード、クレジットカード番号も出力
+        return ls.ServerStream.SendMsg(m)
+    }
+    
+    func (ls *LoggingWrappedStream) RecvMsg(m interface{}) error {
+        err := ls.ServerStream.RecvMsg(m)
+        if err == nil {
+            // ❌ 受信メッセージ全体をログ出力 - 機密データ流出
+            ls.logger.Printf("RECV: %+v", m) // 医療記録、財務情報も出力
+        }
+        return err
+    }
+        
+        // 【災害的結果】
+        // - 患者の医療記録、金融取引データがログに記録
+        // - ログ監視システム経由で機密情報が開発チーム全員に配信
+        // - GDPR違反、医療法違反で経営陣逮捕、企業解散
+    
+    // ❌ 最悪の実装5：リカバリー処理でさらに深刻な障害を引き起こす
+    func BadStreamRecoveryInterceptor() StreamServerInterceptor {
+        return func(srv interface{}, ss ServerStream, info *StreamServerInfo, handler StreamHandler) error {
+            defer func() {
+                if r := recover(); r != nil {
+                    // ❌ パニック情報を機密データと一緒にログ出力
+                    log.Printf("PANIC in stream %s: %+v", info.FullMethod, r)
+                    
+                    // ❌ パニック時にリソースクリーンアップなし
+                    // データベース接続、ファイルハンドルがリーク
+                    
+                    // ❌ クライアントに内部エラー情報を送信 - 情報漏洩
+                    ss.SetTrailer(metadata.Pairs("error", fmt.Sprintf("%+v", r)))
+                    
+                    // ❌ パニック発生を隠蔽 - 障害の根本原因特定不能
+                    return // エラーを返さずに隠蔽
+                }
+            }()
+            
+            return handler(srv, ss)
+        }
+        
+        // 【災害的結果】
+        // - パニック時にデータベース接続1000個リーク
+        // - 内部システム構造が攻撃者に漏洩
+        // - 障害の根本原因が特定できず、再発防止不能
+    }
+    
+    // 【実際の被害例】
+    // - 金融システム：ストリームメトリクス蓄積でメモリ枯渇、取引システム停止
+    // - 医療システム：患者データログ出力で個人情報流出、集団訴訟
+    // - 政府システム：認証バイパスで機密文書アクセス、国家機密漏洩
+    // - ECサイト：レート制限バグで攻撃者が無制限アクセス、サーバー崩壊
+    
+    fmt.Println("❌ Stream interceptor disasters caused national security breach!")
+    // 結果：メモリリーク、認証バイパス、情報漏洩、国家レベルの問題
+}
+
+// ✅ 正解：エンタープライズ級ストリームインターセプタシステム
+type EnterpriseStreamInterceptorSystem struct {
+    // 【セキュリティ】
+    authManager          *AuthManager            // 認証・認可管理
+    tokenValidator       *TokenValidator         // トークン検証
+    permissionChecker    *PermissionChecker      // 権限チェック
+    encryptionManager    *EncryptionManager      // データ暗号化
+    
+    // 【監査・コンプライアンス】
+    auditLogger          *AuditLogger            // セキュリティ監査
+    privacyProtector     *PrivacyProtector       // プライバシー保護
+    complianceChecker    *ComplianceChecker      // コンプライアンスチェック
+    
+    // 【リソース管理】
+    rateLimiter          *DistributedRateLimiter // 分散レート制限
+    resourceMonitor      *ResourceMonitor        // リソース監視
+    memoryManager        *MemoryManager          // メモリ管理
+    connectionPool       *ConnectionPool         // 接続プール管理
+    
+    // 【パフォーマンス】
+    metricsCollector     *StreamMetricsCollector // ストリームメトリクス
+    performanceAnalyzer  *PerformanceAnalyzer    // パフォーマンス分析
+    loadBalancer         *LoadBalancer           // 負荷分散
+    
+    // 【障害対応】
+    circuitBreaker       *CircuitBreaker         // サーキットブレーカー
+    healthChecker        *HealthChecker          // ヘルスチェック
+    recoveryManager      *RecoveryManager        // 復旧管理
+    
+    // 【ストリーム管理】
+    streamRegistry       *StreamRegistry         // ストリーム登録管理
+    sessionManager       *SessionManager         // セッション管理
+    lifecycleManager     *LifecycleManager       // ライフサイクル管理
+    
+    config               *InterceptorConfig      // 設定管理
+    mu                   sync.RWMutex            // 並行アクセス制御
+}
+
+// 【重要関数】エンタープライズストリームインターセプタシステム初期化
+func NewEnterpriseStreamInterceptorSystem(config *InterceptorConfig) *EnterpriseStreamInterceptorSystem {
+    return &EnterpriseStreamInterceptorSystem{
+        config:               config,
+        authManager:          NewAuthManager(),
+        tokenValidator:       NewTokenValidator(),
+        permissionChecker:    NewPermissionChecker(),
+        encryptionManager:    NewEncryptionManager(),
+        auditLogger:          NewAuditLogger(),
+        privacyProtector:     NewPrivacyProtector(),
+        complianceChecker:    NewComplianceChecker(),
+        rateLimiter:          NewDistributedRateLimiter(),
+        resourceMonitor:      NewResourceMonitor(),
+        memoryManager:        NewMemoryManager(),
+        connectionPool:       NewConnectionPool(),
+        metricsCollector:     NewStreamMetricsCollector(),
+        performanceAnalyzer:  NewPerformanceAnalyzer(),
+        loadBalancer:         NewLoadBalancer(),
+        circuitBreaker:       NewCircuitBreaker(),
+        healthChecker:        NewHealthChecker(),
+        recoveryManager:      NewRecoveryManager(),
+        streamRegistry:       NewStreamRegistry(),
+        sessionManager:       NewSessionManager(),
+        lifecycleManager:     NewLifecycleManager(),
+    }
+}
+```
+
 ### Stream Interceptor とは
 
 Stream Interceptorは、gRPCのストリーミングRPC（Server-side streaming、Client-side streaming、Bidirectional streaming）に対して、横断的な関心事を実装するためのミドルウェアパターンです。
