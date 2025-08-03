@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -137,6 +139,7 @@ func Worker(ctx context.Context, id int, results chan<- WorkResult) error {
 			// 
 			// 今回はテストの簡潔性のため結果送信は省略
 			// （テストが単一結果を期待しているため）
+			
 		}
 	}
 }
