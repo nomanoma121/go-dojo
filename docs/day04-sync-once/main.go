@@ -1,9 +1,8 @@
-//go:build ignore
-
 package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -39,8 +38,11 @@ func (cm *ConfigManager) GetConfig() (*Config, error) {
 	// 2. 環境変数や設定ファイルから設定を読み込み
 	// 3. エラーが発生した場合はcm.errに保存
 	// 4. 初期化後は毎回同じconfig、errorを返す
-	
-	return nil, nil
+	cm.once.Do(func() {
+		cm.loadConfigFromEnv()
+	})
+
+	return cm.config, cm.err
 }
 
 // loadConfigFromEnv loads configuration from environment variables
@@ -52,6 +54,37 @@ func (cm *ConfigManager) loadConfigFromEnv() {
 	// 2. 必須項目の検証
 	// 3. 数値の変換（MaxRetries）
 	// 4. cm.configに設定、エラー時はcm.errに保存
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		cm.err = errors.New("DATABASE_URL is required")
+		return
+	}
+
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		cm.err = errors.New("API_KEY is required")
+		return
+	}
+
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	maxRetriesStr := os.Getenv("MAX_RETRIES")
+	maxRetries := 3 // default
+	if maxRetriesStr != "" {
+		if parsed, err := strconv.Atoi(maxRetriesStr); err == nil {
+			maxRetries = parsed
+		}
+	}
+
+	cm.config = &Config{
+		DatabaseURL: databaseURL,
+		APIKey:      apiKey,
+		LogLevel:    logLevel,
+		MaxRetries:  maxRetries,
+	}
 }
 
 // DatabasePool represents a database connection pool singleton
@@ -75,8 +108,14 @@ func GetDatabasePool() *DatabasePool {
 	// 1. sync.Once.Do()でシングルトンインスタンスを一度だけ作成
 	// 2. DatabasePoolを初期化
 	// 3. 接続プールを設定
-	
-	return nil
+	dbPoolOnce.Do(func() {
+		dbPoolInstance = &DatabasePool{
+			connections: make([]string, 0),
+			maxConns:    10,
+			initialized: false,
+		}
+	})
+	return dbPoolInstance
 }
 
 // InitializePool initializes the database connection pool
@@ -88,7 +127,22 @@ func (dp *DatabasePool) InitializePool(maxConns int) error {
 	// 2. 初期化済みかチェック
 	// 3. 接続プールを作成（模擬）
 	// 4. initializedフラグを設定
-	
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
+
+	if dp.initialized {
+		return nil // Already initialized
+	}
+
+	dp.maxConns = maxConns
+	dp.connections = make([]string, maxConns)
+
+	// Simulate connection creation
+	for i := 0; i < maxConns; i++ {
+		dp.connections[i] = fmt.Sprintf("connection-%d", i)
+	}
+
+	dp.initialized = true
 	return nil
 }
 
@@ -100,8 +154,17 @@ func (dp *DatabasePool) GetConnection() (string, error) {
 	// 1. 読み取りロックを取得
 	// 2. 初期化済みかチェック
 	// 3. 利用可能な接続を返す
-	
-	return "", nil
+	dp.mu.RLock()
+	defer dp.mu.RUnlock()
+
+	if !dp.initialized {
+		return "", errors.New("pool not initialized")
+	}
+
+	if len(dp.connections) == 0 {
+		return "", errors.New("no connections available")
+	}
+	return dp.connections[0], nil
 }
 
 // ExpensiveResource represents a resource that is expensive to initialize
@@ -124,8 +187,10 @@ func (er *ExpensiveResource) GetData() ([]byte, error) {
 	// 1. sync.Once.Do()で重い初期化処理を一度だけ実行
 	// 2. 大きなデータを生成（模擬）
 	// 3. エラー処理
-	
-	return nil, nil
+	er.once.Do(func() {
+		er.heavyInitialization()
+	})
+	return er.data, er.err
 }
 
 // heavyInitialization simulates a heavy initialization process
@@ -136,6 +201,14 @@ func (er *ExpensiveResource) heavyInitialization() {
 	// 1. 重い処理をシミュレート（time.Sleep）
 	// 2. 大きなデータを作成
 	// 3. エラーが発生する可能性を考慮
+	// Simulate expensive computation
+	time.Sleep(1 * time.Second)
+
+	// Create large data structure
+	er.data = make([]byte, 1024*1024) // 1MB of data
+	for i := range er.data {
+		er.data[i] = byte(i % 256)
+	}
 }
 
 // Service represents a service that requires one-time initialization
@@ -161,8 +234,10 @@ func (s *Service) Initialize() error {
 	// 1. sync.Once.Do()で初期化を一度だけ実行
 	// 2. 実際の初期化処理を実行
 	// 3. エラーハンドリング
-	
-	return nil
+	s.once.Do(func() {
+		s.performInitialization()
+	})
+	return s.initError
 }
 
 // performInitialization performs the actual initialization work
@@ -174,6 +249,15 @@ func (s *Service) performInitialization() {
 	// 2. データの準備
 	// 3. 初期化完了フラグの設定
 	// 4. エラー処理
+	time.Sleep(500 * time.Millisecond)
+
+	// Prepare data
+	s.data["key1"] = "value1"
+	s.data["key2"] = "value2"
+	s.data["key3"] = "value3"
+	s.data["test-key"] = "test-value"
+
+	s.initialized = true
 }
 
 // GetValue returns a value from the service (requires initialization)
@@ -184,8 +268,20 @@ func (s *Service) GetValue(key string) (string, error) {
 	// 1. 初期化されているかチェック
 	// 2. 初期化エラーがあれば返す
 	// 3. データから値を取得
-	
-	return "", nil
+	if !s.initialized {
+		return "", errors.New("service not initialized")
+	}
+
+	if s.initError != nil {
+		return "", s.initError
+	}
+
+	value, exists := s.data[key]
+	if !exists {
+		return "", errors.New("key not found")
+	}
+
+	return value, nil
 }
 
 func main() {
@@ -197,7 +293,7 @@ func main() {
 	} else {
 		println("Config loaded:", config.DatabaseURL)
 	}
-	
+
 	// データベースプールのテスト
 	pool := GetDatabasePool()
 	err = pool.InitializePool(10)
